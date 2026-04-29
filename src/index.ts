@@ -19,14 +19,15 @@ const MIN_PLAYERS = 2;
  * 游戏主入口
  */
 async function main(): Promise<void> {
-  const { numPlayers, humanPosition } = await getGameConfig();
+  const { numPlayers, humanPosition, llmAssignments } = await getGameConfig();
 
   const config: GameConfig = {
     numPlayers,
     startingChips: STARTING_CHIPS,
     smallBlind: SMALL_BLIND,
     bigBlind: BIG_BLIND,
-    humanPlayerIndex: humanPosition
+    humanPlayerIndex: humanPosition,
+    llmAssignments
   };
 
   let state = createGame(config);

@@ -15,15 +15,19 @@ import { evaluateHand, determineWinners } from './handEvaluator';
  */
 export function createGame(config: GameConfig): GameState {
   const players: Player[] = [];
+  const llmAssignmentMap = new Map((config.llmAssignments ?? []).map(item => [item.playerIndex, item.presetName]));
 
   for (let i = 0; i < config.numPlayers; i++) {
+    const llmPresetName = llmAssignmentMap.get(i);
+
     players.push({
       id: i,
-      name: i === config.humanPlayerIndex ? 'You' : `Player ${i + 1}`,
+      name: i === config.humanPlayerIndex ? 'You' : llmPresetName ? `Player ${i + 1} [LLM]` : `Player ${i + 1}`,
       chips: config.startingChips,
       hand: [],
       isActive: true,
       isHuman: i === config.humanPlayerIndex,
+      llmPresetName,
       currentBet: 0,
       hasActed: false,
       isAllIn: false

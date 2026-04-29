@@ -4,6 +4,7 @@
  */
 
 import { Card } from './card';
+import { LLMAssignment } from './llm';
 
 /**
  * 下注轮中可用的玩家动作
@@ -37,6 +38,7 @@ export interface Player {
   hand: Card[];
   isActive: boolean;
   isHuman: boolean;
+  llmPresetName?: string;
   currentBet: number;
   hasActed: boolean;
   isAllIn: boolean;
@@ -94,4 +96,5 @@ export interface GameConfig {
   smallBlind: number;
   bigBlind: number;
   humanPlayerIndex: number;
+  llmAssignments?: LLMAssignment[];
 }
