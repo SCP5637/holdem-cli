@@ -47,7 +47,8 @@ export function createGame(config: GameConfig): GameState {
     bigBlind: config.bigBlind,
     currentBet: 0,
     minRaise: config.bigBlind,
-    deck
+    deck,
+    handNumber: 1
   };
 
   postBlinds(state);
@@ -345,6 +346,7 @@ export function prepareNewHand(state: GameState): void {
   state.currentPhase = GamePhase.PreFlop;
   state.currentBet = 0;
   state.minRaise = state.bigBlind;
+  state.handNumber++;
 
   for (const player of state.players) {
     player.hand = [];

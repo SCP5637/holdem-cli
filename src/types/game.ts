@@ -59,6 +59,7 @@ export interface GameState {
   currentBet: number;
   minRaise: number;
   deck: Card[];
+  handNumber: number;
 }
 
 /**

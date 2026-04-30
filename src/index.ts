@@ -12,6 +12,7 @@ import { getGameConfig, getPlayerAction, waitForEnter } from './ui/inputHandler'
 import { renderGameState, renderHandResult, renderAction, renderGameOver, clearScreen } from './ui/gameRenderer';
 import { loadLLMPresets } from './core/llmPresetStore';
 import { LLMPreset } from './types/llm';
+import { logger } from './core/logger';
 
 const STARTING_CHIPS = 1000;
 const SMALL_BLIND = 10;
@@ -22,34 +23,50 @@ const MIN_PLAYERS = 2;
  * 游戏主入口
  */
 async function main(): Promise<void> {
-  const { numPlayers, humanPosition, llmAssignments } = await getGameConfig();
+  // 检查是否启用调试模式（通过环境变量或启动参数）
+  const debugMode = process.argv.includes('--debug') || process.env.HOLDEM_DEBUG === 'true';
+  await logger.initialize(debugMode);
 
-  const config: GameConfig = {
-    numPlayers,
-    startingChips: STARTING_CHIPS,
-    smallBlind: SMALL_BLIND,
-    bigBlind: BIG_BLIND,
-    humanPlayerIndex: humanPosition,
-    llmAssignments
-  };
+  logger.info('GAME', '游戏启动', { debugMode });
 
-  const llmPresets = await loadLLMPresets();
-  const llmPresetMap = new Map(llmPresets.map(p => [p.name, p]));
+  try {
+    const { numPlayers, humanPosition, llmAssignments } = await getGameConfig();
 
-  let state = createGame(config);
+    const config: GameConfig = {
+      numPlayers,
+      startingChips: STARTING_CHIPS,
+      smallBlind: SMALL_BLIND,
+      bigBlind: BIG_BLIND,
+      humanPlayerIndex: humanPosition,
+      llmAssignments
+    };
 
-  while (getActivePlayerCount(state) >= MIN_PLAYERS) {
-    await playHand(state, llmPresetMap);
+    logger.info('GAME', '游戏配置', config);
 
-    if (getActivePlayerCount(state) < MIN_PLAYERS) {
-      break;
+    const llmPresets = await loadLLMPresets();
+    const llmPresetMap = new Map(llmPresets.map(p => [p.name, p]));
+
+    logger.info('GAME', '已加载 LLM 预设', { presets: llmPresets.map(p => p.name) });
+
+    let state = createGame(config);
+    logger.info('GAME', '游戏创建成功', { players: state.players.map(p => ({ name: p.name, isHuman: p.isHuman, llmPreset: p.llmPresetName })) });
+
+    while (getActivePlayerCount(state) >= MIN_PLAYERS) {
+      await playHand(state, llmPresetMap);
+
+      if (getActivePlayerCount(state) < MIN_PLAYERS) {
+        break;
+      }
+
+      await waitForEnter('\n按 Enter 键开始下一手牌...');
+      prepareNewHand(state);
     }
 
-    await waitForEnter('\n按 Enter 键开始下一手牌...');
-    prepareNewHand(state);
+    renderGameOver(state);
+    logger.info('GAME', '游戏结束');
+  } finally {
+    await logger.destroy();
   }
-
-  renderGameOver(state);
 }
 
 /**
@@ -58,6 +75,7 @@ async function main(): Promise<void> {
  * @param llmPresetMap - LLM预设映射
  */
 async function playHand(state: GameState, llmPresetMap: Map<string, LLMPreset>): Promise<void> {
+  logger.info('GAME', '开始新的一手牌', { hand: state.handNumber, dealer: state.dealerIndex });
   renderGameState(state);
 
   while (!isHandOver(state)) {
@@ -68,7 +86,9 @@ async function playHand(state: GameState, llmPresetMap: Map<string, LLMPreset>):
     }
 
     if (isBettingRoundComplete(state)) {
+      const prevPhase = state.currentPhase;
       advancePhase(state);
+      logger.logPhaseChange(prevPhase, state.currentPhase);
       renderGameState(state);
     }
   }
@@ -103,6 +123,7 @@ async function playBettingRound(state: GameState, llmPresetMap: Map<string, LLMP
 
         if (success) {
           renderAction(player.name, action.action, action.amount);
+          logger.logGameAction(player.name, action.action, action.amount);
 
           if (!player.isHuman) {
             await delay(1000);

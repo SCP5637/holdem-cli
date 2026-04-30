@@ -5,10 +5,11 @@
   "main": "dist/index.js",
   "bin": "dist/index.js",
   "scripts": {
-    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts --debug",
+    "game": "node dist/index.js",
     "build": "tsc",
-    "dev": "tsx src/index.ts",
-    "package": "pkg . --target node18-win-x64 --output texas-holdem.exe"
+    "package": "pkg . --target node18-win-x64 --output texas-holdem.exe",
+    "start": "node dist/index.js"
   },
   "keywords": [
     "poker",
