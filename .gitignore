@@ -13,6 +13,7 @@ build/
 # Packaged executables
 *.exe
 holdem/
+*.zip
 
 # TypeScript cache
 *.tsbuildinfo
