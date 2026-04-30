@@ -12,6 +12,7 @@ build/
 
 # Packaged executables
 *.exe
+holdem/
 
 # TypeScript cache
 *.tsbuildinfo

@@ -29,6 +29,6 @@
     "targets": [
       "node18-win-x64"
     ],
-    "outputPath": "."
+    "outputPath": "holdem"
   }
 }
