@@ -10,6 +10,8 @@ type LLMActionResponse = {
 };
 
 const ACTION_VALUES = new Set<string>(Object.values(PlayerAction));
+const DEFAULT_MAX_THINKING_TIME_MS = 30000;
+const MAX_RETRY_COUNT = 3;
 
 export async function getLLMAction(state: GameState, preset: LLMPreset): Promise<{ action: PlayerAction; amount?: number }> {
   const player = getCurrentPlayer(state);
@@ -19,19 +21,60 @@ export async function getLLMAction(state: GameState, preset: LLMPreset): Promise
     return { action: PlayerAction.Fold };
   }
 
-  try {
-    const response = await requestLLMDecision(state, player, availableActions, preset);
-    const parsed = parseLLMAction(response);
-    const normalized = normalizeAction(state, player, availableActions, parsed);
+  const maxThinkingTime = preset.maxThinkingTimeMs ?? DEFAULT_MAX_THINKING_TIME_MS;
+  let lastError: Error | null = null;
 
-    if (normalized) {
-      return normalized;
+  for (let attempt = 1; attempt <= MAX_RETRY_COUNT; attempt++) {
+    try {
+      console.log(`  [LLM] ${player.name} 正在思考... (尝试 ${attempt}/${MAX_RETRY_COUNT})`);
+
+      const response = await requestLLMDecisionWithTimeout(
+        state,
+        player,
+        availableActions,
+        preset,
+        maxThinkingTime
+      );
+
+      const parsed = parseLLMAction(response);
+      const normalized = normalizeAction(state, player, availableActions, parsed);
+
+      if (normalized) {
+        console.log(`  [LLM] ${player.name} 决策成功: ${normalized.action}${normalized.amount ? ` ${normalized.amount}` : ''}`);
+        return normalized;
+      }
+
+      throw new Error('LLM 返回的动作无效或不可用');
+    } catch (error) {
+      lastError = error as Error;
+      const isTimeout = lastError.message.includes('超时');
+      console.log(`  [LLM] 尝试 ${attempt}/${MAX_RETRY_COUNT} 失败: ${lastError.message}${isTimeout ? ' (超时)' : ''}`);
+
+      if (attempt < MAX_RETRY_COUNT) {
+        const delayMs = Math.min(1000 * attempt, 3000);
+        await sleep(delayMs);
+      }
     }
-  } catch (error) {
-    console.log(`LLM 决策失败，${player.name} 将改用普通 AI: ${(error as Error).message}`);
   }
 
+  console.log(`  [LLM] ${player.name} 在 ${MAX_RETRY_COUNT} 次尝试后仍失败，改用普通 AI: ${lastError?.message}`);
   return getAIAction(state);
+}
+
+async function requestLLMDecisionWithTimeout(
+  state: GameState,
+  player: Player,
+  availableActions: PlayerAction[],
+  preset: LLMPreset,
+  timeoutMs: number
+): Promise<string> {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(`LLM 思考超时 (${timeoutMs}ms)`)), timeoutMs);
+  });
+
+  const requestPromise = requestLLMDecision(state, player, availableActions, preset);
+
+  return Promise.race([requestPromise, timeoutPromise]);
 }
 
 async function requestLLMDecision(
@@ -164,4 +207,8 @@ function getPhaseName(phase: GamePhase): string {
   };
 
   return phaseMap[phase];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

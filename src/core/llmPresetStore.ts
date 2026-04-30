@@ -46,6 +46,13 @@ export async function upsertLLMPreset(preset: LLMPreset): Promise<LLMPreset[]> {
   return presets;
 }
 
+export async function deleteLLMPreset(name: string): Promise<LLMPreset[]> {
+  const presets = await loadLLMPresets();
+  const filtered = presets.filter(item => item.name !== name);
+  await saveLLMPresets(filtered);
+  return filtered;
+}
+
 function isValidPreset(value: LLMPreset): boolean {
   return Boolean(value && value.name && value.baseUrl && value.apiKey && value.model);
 }

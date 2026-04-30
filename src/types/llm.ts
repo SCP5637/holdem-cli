@@ -5,6 +5,7 @@ export interface LLMPreset {
   model: string;
   temperature?: number;
   maxTokens?: number;
+  maxThinkingTimeMs?: number;
 }
 
 export interface LLMAssignment {

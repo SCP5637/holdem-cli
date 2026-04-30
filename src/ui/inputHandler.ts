@@ -6,7 +6,7 @@
 import * as readline from 'readline';
 import { PlayerAction } from '../types/game';
 import { LLMAssignment, LLMPreset } from '../types/llm';
-import { loadLLMPresets, upsertLLMPreset } from '../core/llmPresetStore';
+import { loadLLMPresets, upsertLLMPreset, deleteLLMPreset } from '../core/llmPresetStore';
 
 /**
  * 创建 readline 接口用于用户输入
@@ -130,28 +130,61 @@ async function configureLLMPresets(): Promise<LLMPreset[]> {
 
   while (true) {
     renderPresetList(presets);
-    console.log('  1. 新增或覆盖预设');
-    console.log('  2. 完成');
+    console.log('\n  --- 操作 ---');
+    console.log('  1. 新增预设');
+    console.log('  2. 覆盖预设');
+    console.log('  3. 删除预设');
+    console.log('  0. 完成');
 
-    const choice = await getNumberInput('选择操作: ', 1, 2);
+    const choice = await getNumberInput('选择操作: ', 0, 3);
 
-    if (choice === 2) {
+    if (choice === 0) {
       return presets;
     }
 
-    const preset = await getLLMPresetInput();
-    presets = await upsertLLMPreset(preset);
-    console.log(`已保存预设: ${preset.name}`);
+    if (choice === 1) {
+      const preset = await getLLMPresetInput(presets, false);
+      presets = await upsertLLMPreset(preset);
+      console.log(`已新增预设: ${preset.name}`);
+    } else if (choice === 2) {
+      if (presets.length === 0) {
+        console.log('没有可覆盖的预设，请先新增预设。');
+        continue;
+      }
+      const presetIndex = await getNumberInput(`选择要覆盖的预设 (1-${presets.length}): `, 1, presets.length);
+      const existingPreset = presets[presetIndex - 1];
+      const preset = await getLLMPresetInput(presets, true, existingPreset);
+      presets = await upsertLLMPreset(preset);
+      console.log(`已覆盖预设: ${preset.name}`);
+    } else if (choice === 3) {
+      if (presets.length === 0) {
+        console.log('没有可删除的预设。');
+        continue;
+      }
+      const presetIndex = await getNumberInput(`选择要删除的预设 (1-${presets.length}): `, 1, presets.length);
+      const presetToDelete = presets[presetIndex - 1];
+      const confirmed = await getYesNoInput(`确认删除预设 "${presetToDelete.name}"? (y/N): `, false);
+      if (confirmed) {
+        presets = await deleteLLMPreset(presetToDelete.name);
+        console.log(`已删除预设: ${presetToDelete.name}`);
+      } else {
+        console.log('已取消删除。');
+      }
+    }
   }
 }
 
-async function getLLMPresetInput(): Promise<LLMPreset> {
-  const name = await getRequiredInput('预设名称: ');
-  const baseUrl = await getRequiredInput('OpenAI 兼容 API Base URL，例如 https://api.openai.com/v1: ');
-  const apiKey = await getRequiredInput('API Key: ');
-  const model = await getRequiredInput('模型名称，例如 gpt-4o-mini: ');
+async function getLLMPresetInput(
+  existingPresets: LLMPreset[],
+  isUpdate: boolean,
+  existingPreset?: LLMPreset
+): Promise<LLMPreset> {
+  const name = await getPresetNameInput(existingPresets, isUpdate, existingPreset?.name);
+  const baseUrl = await getBaseUrlInput(existingPreset?.baseUrl);
+  const apiKey = await getApiKeyInput(existingPreset?.apiKey);
+  const model = await getRequiredInput('模型名称，例如 gpt-4o-mini: ', existingPreset?.model);
   const temperatureInput = await getInput('temperature，可留空默认 0.2: ');
-  const maxTokensInput = await getInput('max tokens，可留空默认 120: ');
+  const maxTokensInput = await getMaxTokensInput(existingPreset?.maxTokens);
 
   return {
     name,
@@ -159,8 +192,143 @@ async function getLLMPresetInput(): Promise<LLMPreset> {
     apiKey,
     model,
     temperature: parseOptionalNumber(temperatureInput),
-    maxTokens: parseOptionalNumber(maxTokensInput)
+    maxTokens: maxTokensInput
   };
+}
+
+async function getPresetNameInput(
+  existingPresets: LLMPreset[],
+  isUpdate: boolean,
+  defaultValue?: string
+): Promise<string> {
+  while (true) {
+    const prompt = defaultValue ? `预设名称 (${defaultValue}): ` : '预设名称: ';
+    const input = await getInput(prompt);
+    const name = input.trim() || defaultValue;
+
+    if (!name) {
+      console.log('预设名称不能为空。');
+      continue;
+    }
+
+    const exists = existingPresets.some(p => p.name === name);
+
+    if (isUpdate) {
+      if (!exists) {
+        console.log('该预设名称不存在，无法覆盖。');
+        continue;
+      }
+    } else {
+      if (exists) {
+        console.log('该预设名称已存在，请使用其他名称或选择覆盖操作。');
+        continue;
+      }
+    }
+
+    return name;
+  }
+}
+
+async function getBaseUrlInput(defaultValue?: string): Promise<string> {
+  while (true) {
+    const prompt = defaultValue
+      ? `OpenAI 兼容 API Base URL (${defaultValue}): `
+      : 'OpenAI 兼容 API Base URL，例如 https://api.openai.com/v1: ';
+    const input = await getInput(prompt);
+    const baseUrl = input.trim() || defaultValue;
+
+    if (!baseUrl) {
+      console.log('Base URL 不能为空。');
+      continue;
+    }
+
+    if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+      console.log('Base URL 必须以 http:// 或 https:// 开头。');
+      continue;
+    }
+
+    try {
+      new URL(baseUrl);
+    } catch {
+      console.log('Base URL 格式无效，请输入有效的 URL。');
+      continue;
+    }
+
+    return baseUrl;
+  }
+}
+
+async function getApiKeyInput(defaultValue?: string): Promise<string> {
+  while (true) {
+    const prompt = defaultValue ? `API Key (${maskApiKey(defaultValue)}): ` : 'API Key: ';
+    const input = await getInput(prompt);
+    const apiKey = input.trim() || defaultValue;
+
+    if (!apiKey) {
+      console.log('API Key 不能为空。');
+      continue;
+    }
+
+    if (apiKey.length < 8) {
+      console.log('API Key 长度过短，请检查输入。');
+      continue;
+    }
+
+    return apiKey;
+  }
+}
+
+function maskApiKey(apiKey: string): string {
+  if (apiKey.length <= 8) {
+    return '***';
+  }
+  return apiKey.slice(0, 4) + '...' + apiKey.slice(-4);
+}
+
+async function getMaxTokensInput(defaultValue?: number): Promise<number | undefined> {
+  const MAX_TOKENS_LIMIT = 1000000;
+
+  while (true) {
+    const prompt = defaultValue !== undefined
+      ? `max tokens，可留空默认 ${defaultValue}: `
+      : 'max tokens，可留空默认 120，支持 k/m 单位 (如 4k, 1m): ';
+    const input = (await getInput(prompt)).trim().toLowerCase();
+
+    if (input === '') {
+      return defaultValue;
+    }
+
+    let value: number;
+
+    if (input.endsWith('m')) {
+      const num = parseFloat(input.slice(0, -1));
+      if (isNaN(num) || num < 0) {
+        console.log('输入无效，请输入正数或带 k/m 单位的数值。');
+        continue;
+      }
+      value = Math.floor(num * 1000000);
+    } else if (input.endsWith('k')) {
+      const num = parseFloat(input.slice(0, -1));
+      if (isNaN(num) || num < 0) {
+        console.log('输入无效，请输入正数或带 k/m 单位的数值。');
+        continue;
+      }
+      value = Math.floor(num * 1000);
+    } else {
+      value = parseInt(input, 10);
+      if (isNaN(value) || value < 0) {
+        console.log('输入无效，请输入正整数或带 k/m 单位的数值。');
+        continue;
+      }
+    }
+
+    if (value > MAX_TOKENS_LIMIT) {
+      console.log(`max tokens 不能超过 1M (${MAX_TOKENS_LIMIT})，请重新输入。`);
+      continue;
+    }
+
+    return value;
+  }
 }
 
 async function configureLLMOpponents(numPlayers: number, humanPosition: number, presets: LLMPreset[]): Promise<LLMAssignment[]> {
@@ -197,12 +365,14 @@ async function configureLLMOpponents(numPlayers: number, humanPosition: number, 
   return assignments;
 }
 
-async function getRequiredInput(question: string): Promise<string> {
+async function getRequiredInput(question: string, defaultValue?: string): Promise<string> {
   while (true) {
-    const input = await getInput(question);
+    const prompt = defaultValue ? `${question.replace(/: $/, '')} (${defaultValue}): ` : question;
+    const input = await getInput(prompt);
+    const value = input.trim() || defaultValue;
 
-    if (input.length > 0) {
-      return input;
+    if (value && value.length > 0) {
+      return value;
     }
 
     console.log('输入不能为空。');
@@ -238,7 +408,7 @@ function renderPresetList(presets: LLMPreset[]): void {
   }
 
   presets.forEach((preset, index) => {
-    console.log(`  ${index + 1}. ${preset.name} - ${preset.model} - ${preset.baseUrl}`);
+    console.log(`  [#${index + 1}] ${preset.name} - ${preset.model} - ${preset.baseUrl}`);
   });
 }
 
