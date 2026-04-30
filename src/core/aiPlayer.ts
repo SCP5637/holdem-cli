@@ -13,7 +13,7 @@ import { Card } from '../types/card';
  * @param state - 当前游戏状态
  * @returns 所选动作和可选加注金额
  */
-export function getAIAction(state: GameState): { action: PlayerAction; amount?: number } {
+export async function getAIAction(state: GameState): Promise<{ action: PlayerAction; amount?: number }> {
   const player = getCurrentPlayer(state);
   const availableActions = getAvailableActions(state);
 
@@ -21,11 +21,23 @@ export function getAIAction(state: GameState): { action: PlayerAction; amount?: 
     return { action: PlayerAction.Fold };
   }
 
+  // 模拟AI思考时间（2-5秒随机）
+  await delay(3000 + Math.random() * 4000);
+
   const handStrength = calculateHandStrength(state, player);
   const potOdds = calculatePotOdds(state, player);
   const aggression = calculateAggression(state);
 
   return makeDecision(state, player, handStrength, potOdds, aggression, availableActions);
+}
+
+/**
+ * 创建延迟
+ * @param ms - 延迟毫秒数
+ * @returns 延迟后解析的 Promise
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**

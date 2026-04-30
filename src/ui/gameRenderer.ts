@@ -14,6 +14,68 @@ export function clearScreen(): void {
 }
 
 /**
+ * 显示动态等待动画（循环省略号）
+ * @param message - 基础消息（不含省略号）
+ * @param durationMs - 动画持续时间（毫秒）
+ * @returns 动画结束后的 Promise
+ */
+export async function showWaitingAnimation(message: string, durationMs: number): Promise<void> {
+  const frames = ['', '.', '..', '...'];
+  const interval = 500; // 每500ms切换一次
+  let currentFrame = 0;
+  let elapsed = 0;
+
+  // 隐藏光标
+  process.stdout.write('\x1B[?25l');
+
+  return new Promise((resolve) => {
+    const timer = setInterval(() => {
+      // 清除当前行并重新打印
+      process.stdout.write(`\r  ${message}${frames[currentFrame]}`.padEnd(50, ' '));
+      currentFrame = (currentFrame + 1) % frames.length;
+      elapsed += interval;
+
+      if (elapsed >= durationMs) {
+        clearInterval(timer);
+        // 清除行并显示完成状态
+        process.stdout.write(`\r  ${message}... 完成`.padEnd(50, ' ') + '\n');
+        // 恢复光标
+        process.stdout.write('\x1B[?25h');
+        resolve();
+      }
+    }, interval);
+  });
+}
+
+/**
+ * 开始动态等待动画（可手动停止）
+ * @param message - 基础消息（不含省略号）
+ * @returns 停止动画的函数
+ */
+export function startWaitingAnimation(message: string): () => void {
+  const frames = ['', '.', '..', '...'];
+  const interval = 500;
+  let currentFrame = 0;
+
+  // 隐藏光标
+  process.stdout.write('\x1B[?25l');
+
+  const timer = setInterval(() => {
+    process.stdout.write(`\r  ${message}${frames[currentFrame]}`.padEnd(50, ' '));
+    currentFrame = (currentFrame + 1) % frames.length;
+  }, interval);
+
+  // 返回停止函数
+  return () => {
+    clearInterval(timer);
+    // 清除行
+    process.stdout.write('\r'.padEnd(50, ' ') + '\r');
+    // 恢复光标
+    process.stdout.write('\x1B[?25h');
+  };
+}
+
+/**
  * 将完整的游戏状态渲染到控制台
  * @param state - 当前游戏状态
  * @param showAllCards - 是否显示所有玩家的卡牌
@@ -142,11 +204,7 @@ function renderPlayer(player: Player, state: GameState, showCards: boolean): voi
  * @param state - 当前游戏状态
  */
 function renderCurrentPlayer(state: GameState): void {
-  const player = state.players[state.currentPlayerIndex];
-
-  if (!player.isHuman && player.isActive && !player.isAllIn) {
-    console.log(`  ${player.name} 正在思考...`);
-  }
+  // 动态思考动画由 startWaitingAnimation 处理，此处不再输出静态文本
 }
 
 /**
@@ -162,7 +220,7 @@ export function renderHandResult(
 ): void {
   console.log();
   console.log('  ╔══════════════════════════════════════════════════════════════╗');
-  console.log('  ║                         手牌结果                             ║');
+  console.log('  ║                          手牌结果                             ║');
   console.log('  ╚══════════════════════════════════════════════════════════════╝');
   console.log();
 
@@ -221,7 +279,7 @@ export function renderAction(playerName: string, action: string, amount?: number
 export function renderGameOver(state: GameState): void {
   console.log();
   console.log('  ╔══════════════════════════════════════════════════════════════╗');
-  console.log('  ║                         游戏结束                             ║');
+  console.log('  ║                          游戏结束                             ║');
   console.log('  ╚══════════════════════════════════════════════════════════════╝');
   console.log();
 

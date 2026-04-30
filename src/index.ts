@@ -9,7 +9,7 @@ import { getAIAction } from './core/aiPlayer';
 import { getLLMAction } from './core/llmPlayer';
 import { evaluateHand } from './core/handEvaluator';
 import { getGameConfig, getPlayerAction, waitForEnter } from './ui/inputHandler';
-import { renderGameState, renderHandResult, renderAction, renderGameOver, clearScreen } from './ui/gameRenderer';
+import { renderGameState, renderHandResult, renderAction, renderGameOver, clearScreen, startWaitingAnimation } from './ui/gameRenderer';
 import { loadLLMPresets } from './core/llmPresetStore';
 import { LLMPreset } from './types/llm';
 import { logger } from './core/logger';
@@ -116,7 +116,21 @@ async function playBettingRound(state: GameState, llmPresetMap: Map<string, LLMP
     if (player.isActive && !player.isAllIn) {
       renderGameState(state);
 
+      // 如果是AI玩家，显示动态等待动画
+      let stopAnimation: (() => void) | null = null;
+      if (!player.isHuman) {
+        const thinkingMessage = player.llmPresetName
+          ? `[LLM] ${player.name} 正在思考`
+          : `${player.name} 正在思考`;
+        stopAnimation = startWaitingAnimation(thinkingMessage);
+      }
+
       const action = await getAction(state, player, llmPresetMap);
+
+      // 停止动画
+      if (stopAnimation) {
+        stopAnimation();
+      }
 
       if (action) {
         const success = executeAction(state, action.action, action.amount);
@@ -124,10 +138,6 @@ async function playBettingRound(state: GameState, llmPresetMap: Map<string, LLMP
         if (success) {
           renderAction(player.name, action.action, action.amount);
           logger.logGameAction(player.name, action.action, action.amount);
-
-          if (!player.isHuman) {
-            await delay(1000);
-          }
         }
       }
     }
@@ -167,7 +177,7 @@ async function getAction(state: GameState, player: Player, llmPresetMap: Map<str
   }
 
   // 默认使用普通AI
-  return getAIAction(state);
+  return await getAIAction(state);
 }
 
 /**
@@ -201,15 +211,6 @@ async function resolveHand(state: GameState): Promise<void> {
  */
 function getActivePlayerCount(state: GameState): number {
   return state.players.filter(p => p.chips > 0 || p.currentBet > 0).length;
-}
-
-/**
- * 创建 AI 回合的延迟
- * @param ms - 延迟毫秒数
- * @returns 延迟后解析的 Promise
- */
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 main().catch(console.error);
