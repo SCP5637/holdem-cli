@@ -45,12 +45,26 @@ export interface Player {
 }
 
 /**
+ * 边池结构
+ * 当玩家All-In时，如果其下注金额少于其他玩家，会创建边池
+ */
+export interface SidePot {
+  /** 边池金额 */
+  amount: number;
+  /** 有资格参与此边池的玩家ID列表 */
+  eligiblePlayers: number[];
+}
+
+/**
  * 当前游戏状态
  */
 export interface GameState {
   players: Player[];
   communityCards: Card[];
+  /** 主底池金额 */
   pot: number;
+  /** 边池列表 */
+  sidePots: SidePot[];
   currentPhase: GamePhase;
   currentPlayerIndex: number;
   dealerIndex: number;

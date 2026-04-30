@@ -173,6 +173,9 @@ async function requestLLMDecision(
 }
 
 function createDecisionContext(state: GameState, player: Player, availableActions: PlayerAction[]): object {
+  // 计算总底池（主底池 + 所有边池）
+  const totalPot = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+
   return {
     phase: getPhaseName(state.currentPhase),
     availableActions,
@@ -183,7 +186,9 @@ function createDecisionContext(state: GameState, player: Player, availableAction
       toCall: state.currentBet - player.currentBet
     },
     table: {
-      pot: state.pot,
+      pot: totalPot,
+      mainPot: state.pot,
+      sidePots: state.sidePots.map((sp, i) => ({ index: i + 1, amount: sp.amount })),
       currentBet: state.currentBet,
       smallBlind: state.smallBlind,
       bigBlind: state.bigBlind,

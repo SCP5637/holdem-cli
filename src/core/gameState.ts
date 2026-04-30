@@ -3,7 +3,7 @@
  * 处理游戏初始化、下注轮和状态转换
  */
 
-import { GameState, Player, GamePhase, GameConfig, PlayerAction, HandResult } from '../types/game';
+import { GameState, Player, GamePhase, GameConfig, PlayerAction, HandResult, SidePot } from '../types/game';
 import { Card } from '../types/card';
 import { createShuffledDeck, dealCards } from './deck';
 import { evaluateHand, determineWinners } from './handEvaluator';
@@ -40,6 +40,7 @@ export function createGame(config: GameConfig): GameState {
     players,
     communityCards: [],
     pot: 0,
+    sidePots: [],
     currentPhase: GamePhase.PreFlop,
     currentPlayerIndex: 0,
     dealerIndex: 0,
@@ -128,10 +129,128 @@ function placeBet(state: GameState, playerIndex: number, amount: number): void {
 
   player.chips -= actualBet;
   player.currentBet += actualBet;
-  state.pot += actualBet;
 
   if (player.chips === 0) {
     player.isAllIn = true;
+  }
+
+  // 重新计算边池
+  calculateSidePots(state);
+}
+
+/**
+ * 计算边池
+ * 当玩家All-In时，根据其下注金额创建边池
+ * @param state - 当前游戏状态
+ */
+function calculateSidePots(state: GameState): void {
+  // 获取所有活跃玩家（未弃牌）
+  const activePlayers = state.players.filter(p => p.isActive || p.currentBet > 0);
+
+  if (activePlayers.length === 0) {
+    state.pot = 0;
+    state.sidePots = [];
+    return;
+  }
+
+  // 按currentBet从小到大排序
+  const sortedPlayers = [...activePlayers].sort((a, b) => a.currentBet - b.currentBet);
+
+  const sidePots: SidePot[] = [];
+  let previousBet = 0;
+  let mainPotAmount = 0;
+
+  for (let i = 0; i < sortedPlayers.length; i++) {
+    const player = sortedPlayers[i];
+    const currentBet = player.currentBet;
+
+    if (currentBet > previousBet) {
+      const betDiff = currentBet - previousBet;
+      const eligibleCount = sortedPlayers.length - i;
+      const potContribution = betDiff * eligibleCount;
+
+      // 如果这是最小的下注（有玩家All-In且下注最少）
+      // 或者这是All-In玩家的下注层级
+      if (i > 0 || sortedPlayers.some(p => p.isAllIn && p.currentBet === currentBet)) {
+        // 创建边池
+        const eligiblePlayers = sortedPlayers
+          .slice(i)
+          .filter(p => p.isActive) // 只有未弃牌的玩家有资格
+          .map(p => p.id);
+
+        if (eligiblePlayers.length > 0) {
+          sidePots.push({
+            amount: potContribution,
+            eligiblePlayers
+          });
+        }
+      } else {
+        // 主底池部分
+        mainPotAmount += potContribution;
+      }
+
+      previousBet = currentBet;
+    }
+  }
+
+  // 将最小的边池合并到主底池（如果没有All-In玩家）
+  // 或者保留为边池
+  if (sidePots.length > 0) {
+    // 找到最小的边池，如果没有All-In玩家参与，则作为主底池
+    const allInPlayers = sortedPlayers.filter(p => p.isAllIn);
+
+    if (allInPlayers.length === 0) {
+      // 没有All-In，所有下注都进主底池
+      state.pot = sidePots.reduce((sum, pot) => sum + pot.amount, 0) + mainPotAmount;
+      state.sidePots = [];
+    } else {
+      // 有All-In玩家，需要分离主底池和边池
+      // 主底池是所有玩家都能参与的最低层
+      const minAllInBet = Math.min(...allInPlayers.map(p => p.currentBet));
+
+      // 重新计算
+      let newMainPot = 0;
+      const newSidePots: SidePot[] = [];
+      previousBet = 0;
+
+      for (let i = 0; i < sortedPlayers.length; i++) {
+        const player = sortedPlayers[i];
+        const currentBet = player.currentBet;
+
+        if (currentBet > previousBet) {
+          const betDiff = currentBet - previousBet;
+          const eligibleCount = sortedPlayers.length - i;
+          const potContribution = betDiff * eligibleCount;
+
+          // 确定哪些玩家有资格参与这一层
+          const eligiblePlayers = sortedPlayers
+            .slice(i)
+            .filter(p => p.isActive)
+            .map(p => p.id);
+
+          if (previousBet < minAllInBet) {
+            // 这一层是主底池（所有玩家都能参与）
+            newMainPot += potContribution;
+          } else {
+            // 这一层是边池
+            if (eligiblePlayers.length > 0) {
+              newSidePots.push({
+                amount: potContribution,
+                eligiblePlayers
+              });
+            }
+          }
+
+          previousBet = currentBet;
+        }
+      }
+
+      state.pot = newMainPot;
+      state.sidePots = newSidePots;
+    }
+  } else {
+    state.pot = mainPotAmount;
+    state.sidePots = [];
   }
 }
 
@@ -309,20 +428,48 @@ export function determineHandWinners(state: GameState): number[] {
 }
 
 /**
- * 将底池分配给获胜者
+ * 将底池分配给获胜者（支持边池）
  * @param state - 当前游戏状态
  * @param winnerIds - 获胜玩家ID数组
  */
 export function awardPot(state: GameState, winnerIds: number[]): void {
-  const share = Math.floor(state.pot / winnerIds.length);
-  const remainder = state.pot % winnerIds.length;
-
-  for (let i = 0; i < winnerIds.length; i++) {
-    const winner = state.players.find(p => p.id === winnerIds[i])!;
-    winner.chips += share + (i < remainder ? 1 : 0);
+  // 分配主底池
+  if (state.pot > 0) {
+    const mainPotWinners = winnerIds;
+    distributePot(state, mainPotWinners, state.pot);
+    state.pot = 0;
   }
 
-  state.pot = 0;
+  // 分配边池
+  for (const sidePot of state.sidePots) {
+    // 找出有资格参与此边池的获胜者
+    const sidePotWinners = winnerIds.filter(id => sidePot.eligiblePlayers.includes(id));
+
+    if (sidePotWinners.length > 0) {
+      distributePot(state, sidePotWinners, sidePot.amount);
+    } else {
+      // 如果没有获胜者有资格，将边池分配给主获胜者
+      distributePot(state, winnerIds, sidePot.amount);
+    }
+  }
+
+  state.sidePots = [];
+}
+
+/**
+ * 将指定金额分配给获胜者
+ * @param state - 当前游戏状态
+ * @param winners - 获胜玩家ID数组
+ * @param amount - 要分配的金额
+ */
+function distributePot(state: GameState, winners: number[], amount: number): void {
+  const share = Math.floor(amount / winners.length);
+  const remainder = amount % winners.length;
+
+  for (let i = 0; i < winners.length; i++) {
+    const winner = state.players.find(p => p.id === winners[i])!;
+    winner.chips += share + (i < remainder ? 1 : 0);
+  }
 }
 
 /**
@@ -343,6 +490,7 @@ export function prepareNewHand(state: GameState): void {
   state.deck = createShuffledDeck();
   state.communityCards = [];
   state.pot = 0;
+  state.sidePots = [];
   state.currentPhase = GamePhase.PreFlop;
   state.currentBet = 0;
   state.minRaise = state.bigBlind;

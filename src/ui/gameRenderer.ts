@@ -65,8 +65,18 @@ function renderCommunityCards(state: GameState): void {
  * @param state - 当前游戏状态
  */
 function renderPot(state: GameState): void {
+  const totalPot = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+
   console.log('  ┌────────────────────────────────────────────────────────────┐');
-  console.log(`  │  底池: $${state.pot.toString().padEnd(46 - state.pot.toString().length)}│`);
+  console.log(`  │  总底池: $${totalPot.toString().padEnd(45 - totalPot.toString().length)}│`);
+
+  if (state.sidePots.length > 0) {
+    console.log(`  │  主底池: $${state.pot.toString().padEnd(45 - state.pot.toString().length)}│`);
+    state.sidePots.forEach((sidePot, index) => {
+      console.log(`  │  边池 ${index + 1}: $${sidePot.amount.toString().padEnd(43 - sidePot.amount.toString().length)}│`);
+    });
+  }
+
   console.log(`  │  当前下注: $${state.currentBet.toString().padEnd(42 - state.currentBet.toString().length)}│`);
   console.log('  └────────────────────────────────────────────────────────────┘');
   console.log();
@@ -167,12 +177,14 @@ export function renderHandResult(
 
   console.log();
 
+  const totalPot = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+
   if (winners.length === 1) {
     const winner = state.players.find(p => p.id === winners[0])!;
-    console.log(`  获胜者: ${winner.name} 赢得 $${state.pot}`);
+    console.log(`  获胜者: ${winner.name} 赢得 $${totalPot}`);
   } else {
     const winnerNames = winners.map(id => state.players.find(p => p.id === id)!.name).join(', ');
-    const share = Math.floor(state.pot / winners.length);
+    const share = Math.floor(totalPot / winners.length);
     console.log(`  获胜者: ${winnerNames} 平分底池 (每人 $${share})`);
   }
 

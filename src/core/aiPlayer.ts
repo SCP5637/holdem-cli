@@ -64,7 +64,10 @@ function calculatePotOdds(state: GameState, player: Player): number {
     return 1;
   }
 
-  return toCall / (state.pot + toCall);
+  // 计算总底池（主底池 + 所有边池）
+  const totalPot = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+
+  return toCall / (totalPot + toCall);
 }
 
 /**
@@ -155,13 +158,16 @@ function calculateRaiseAmount(state: GameState, player: Player, handStrength: nu
   const minRaise = state.minRaise;
   const maxRaise = player.chips + player.currentBet;
 
-  const potSizeFactor = state.pot / state.bigBlind;
+  // 计算总底池（主底池 + 所有边池）
+  const totalPot = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+
+  const potSizeFactor = totalPot / state.bigBlind;
   const strengthMultiplier = 1 + (handStrength * 2);
 
   let raiseAmount = Math.floor(minRaise * strengthMultiplier);
 
   if (potSizeFactor > 10) {
-    raiseAmount = Math.floor(state.pot * 0.75);
+    raiseAmount = Math.floor(totalPot * 0.75);
   }
 
   raiseAmount = Math.max(raiseAmount, minRaise);
