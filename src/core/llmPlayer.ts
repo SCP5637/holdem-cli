@@ -4,6 +4,8 @@ import { LLMPreset } from '../types/llm';
 import { getAvailableActions, getCurrentPlayer } from './gameState';
 import { getAIAction } from './aiPlayer';
 import { logger } from './logger';
+import { generateText } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
 
 type LLMActionResponse = {
   action?: string;
@@ -110,66 +112,49 @@ async function requestLLMDecision(
   availableActions: PlayerAction[],
   preset: LLMPreset
 ): Promise<string> {
-  // 处理 baseUrl：移除末尾斜杠，确保包含 /v1 路径
-  let baseUrl = preset.baseUrl.replace(/\/+$/, '');
-  if (!baseUrl.endsWith('/v1')) {
-    baseUrl += '/v1';
-  }
-  const endpoint = `${baseUrl}/chat/completions`;
+  const baseUrl = normalizeBaseUrl(preset.baseUrl);
+  const openai = createOpenAI({
+    baseURL: baseUrl,
+    apiKey: preset.apiKey
+  });
 
-  const requestBody = {
-    model: preset.model,
-    temperature: preset.temperature ?? 0.2,
-    max_tokens: preset.maxTokens ?? 120,
-    messages: [
-      {
-        role: 'system',
-        content: '你正在操控一个德州扑克电脑玩家。你必须只返回 JSON，不要解释。JSON 格式为 {"action":"fold|check|call|raise|allin","amount":数字可选}。raise 的 amount 表示本轮该玩家最终总下注额，不是额外加注额。只能选择用户提供的 availableActions。'
-      },
-      {
-        role: 'user',
-        content: JSON.stringify(createDecisionContext(state, player, availableActions))
-      }
-    ]
-  };
+  const systemPrompt = '你正在操控一个德州扑克电脑玩家。你必须只返回 JSON，不要解释。JSON 格式为 {"action":"fold|check|call|raise|allin","amount":数字可选}。raise 的 amount 表示本轮该玩家最终总下注额，不是额外加注额。只能选择用户提供的 availableActions。';
+  const userPrompt = JSON.stringify(createDecisionContext(state, player, availableActions));
 
   logger.logLLMRequest(preset.name, {
-    endpoint,
+    baseUrl,
     model: preset.model,
     temperature: preset.temperature ?? 0.2,
-    max_tokens: preset.maxTokens ?? 120,
-    messages: requestBody.messages
+    maxTokens: preset.maxTokens ?? 120,
+    system: systemPrompt,
+    prompt: userPrompt
   });
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${preset.apiKey}`
-    },
-    body: JSON.stringify(requestBody)
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '无法读取错误响应');
-    logger.error('LLM', `HTTP 错误`, {
-      status: response.status,
-      statusText: response.statusText,
-      errorBody: errorText
+  try {
+    const result = await generateText({
+      model: openai(preset.model),
+      temperature: preset.temperature ?? 0.2,
+      maxTokens: preset.maxTokens ?? 120,
+      system: systemPrompt,
+      prompt: userPrompt
     });
-    throw new Error(`HTTP ${response.status} ${response.statusText}`);
+
+    logger.logLLMResponse(preset.name, {
+      text: result.text,
+      finishReason: result.finishReason,
+      usage: result.usage
+    });
+
+    if (!result.text) {
+      throw new Error('响应内容为空');
+    }
+
+    return result.text;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('LLM', '调用 Vercel AI SDK 失败', { baseUrl, model: preset.model, error: message });
+    throw new Error(message);
   }
-
-  const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-  logger.logLLMResponse(preset.name, data);
-
-  const content = data.choices?.[0]?.message?.content;
-
-  if (!content) {
-    throw new Error('响应内容为空');
-  }
-
-  return content;
 }
 
 function createDecisionContext(state: GameState, player: Player, availableActions: PlayerAction[]): object {
@@ -267,4 +252,8 @@ function getPhaseName(phase: GamePhase): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '');
 }
