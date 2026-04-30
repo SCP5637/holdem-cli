@@ -10,6 +10,9 @@ build/
 *.d.ts
 *.d.ts.map
 
+# Packaged executables
+*.exe
+
 # TypeScript cache
 *.tsbuildinfo
 
