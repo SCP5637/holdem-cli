@@ -183,16 +183,24 @@ async function getLLMPresetInput(
   const baseUrl = await getBaseUrlInput(existingPreset?.baseUrl);
   const apiKey = await getApiKeyInput(existingPreset?.apiKey);
   const model = await getRequiredInput('模型名称，例如 gpt-4o-mini: ', existingPreset?.model);
-  const temperatureInput = await getInput('temperature，可留空默认 0.2: ');
+  const temperature = await getTemperatureInput(existingPreset?.temperature);
   const maxTokensInput = await getMaxTokensInput(existingPreset?.maxTokens);
+
+  let customPrompt: string | undefined = existingPreset?.customPrompt;
+  const useCustomPrompt = await getYesNoInput('是否设定自定义提示词？(y/N): ', false);
+  if (useCustomPrompt) {
+    console.log('请输入自定义提示词（多行输入，输入空行结束）：');
+    customPrompt = await getMultilineInput();
+  }
 
   return {
     name,
     baseUrl,
     apiKey,
     model,
-    temperature: parseOptionalNumber(temperatureInput),
-    maxTokens: maxTokensInput
+    temperature,
+    maxTokens: maxTokensInput,
+    customPrompt
   };
 }
 
@@ -419,6 +427,44 @@ function parseOptionalNumber(input: string): number | undefined {
 
   const value = Number(input);
   return Number.isFinite(value) ? value : undefined;
+}
+
+async function getTemperatureInput(defaultValue?: number): Promise<number | undefined> {
+  while (true) {
+    const prompt = defaultValue !== undefined
+      ? `temperature (0.95-1)，可留空默认 ${defaultValue}: `
+      : 'temperature (0.95-1)，可留空默认 1: ';
+    const input = (await getInput(prompt)).trim();
+
+    if (input === '') {
+      return defaultValue;
+    }
+
+    const value = parseFloat(input);
+    if (isNaN(value)) {
+      console.log('输入无效，请输入数字。');
+      continue;
+    }
+
+    if (value < 0.95 || value > 1) {
+      console.log('temperature 必须在 0.95 到 1 之间。');
+      continue;
+    }
+
+    return value;
+  }
+}
+
+async function getMultilineInput(): Promise<string> {
+  const lines: string[] = [];
+  while (true) {
+    const line = await getInput('');
+    if (line === '') {
+      break;
+    }
+    lines.push(line);
+  }
+  return lines.join('\n');
 }
 
 /**

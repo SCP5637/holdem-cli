@@ -118,13 +118,16 @@ async function requestLLMDecision(
     apiKey: preset.apiKey
   });
 
-  const systemPrompt = '你正在操控一个德州扑克电脑玩家。你必须只返回 JSON，尽快给出答案，不要解释。JSON 格式为 {"action":"fold|check|call|raise|allin","amount":数字可选}。raise 的 amount 表示本轮该玩家最终总下注额，不是额外加注额。只能选择用户提供的 availableActions。';
+  const baseSystemPrompt = '你正在操控一个德州扑克电脑玩家。你必须只返回 JSON，尽快分析并给出答案，不需要解释和其他描述。JSON 格式为 {"action":"fold|check|call|raise|allin","amount":数字可选}。raise 的 amount 表示本轮该玩家最终总下注额，不是额外加注额。只能选择用户提供的 availableActions。';
+  const systemPrompt = preset.customPrompt
+    ? `${baseSystemPrompt}\n\n--- 附加提示词 ---\n${preset.customPrompt}`
+    : baseSystemPrompt;
   const userPrompt = JSON.stringify(createDecisionContext(state, player, availableActions));
 
   logger.logLLMRequest(preset.name, {
     baseUrl,
     model: preset.model,
-    temperature: preset.temperature ?? 0.2,
+    temperature: preset.temperature ?? 1,
     maxTokens: preset.maxTokens ?? 120,
     system: systemPrompt,
     prompt: userPrompt
@@ -133,7 +136,7 @@ async function requestLLMDecision(
   try {
     const result = await generateText({
       model: openai(preset.model),
-      temperature: preset.temperature ?? 0.2,
+      temperature: preset.temperature ?? 1,
       maxTokens: preset.maxTokens ?? 120,
       system: systemPrompt,
       prompt: userPrompt
