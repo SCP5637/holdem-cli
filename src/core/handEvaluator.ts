@@ -12,8 +12,13 @@ import { HandRank, HandResult } from '../types/game';
  * @returns 手牌等级和相关信息
  */
 export function evaluateHand(cards: Card[]): { rank: HandRank; kickers: number[]; description: string } {
-  if (cards.length < 5) {
+  if (cards.length < 2) {
     return { rank: HandRank.HighCard, kickers: [], description: '无效手牌' };
+  }
+
+  if (cards.length < 5) {
+    const values = cards.map(c => RANK_VALUES[c.rank]).sort((a, b) => b - a);
+    return { rank: HandRank.HighCard, kickers: values, description: `${getRankName(values[0])}高牌` };
   }
 
   const bestHand = findBestHand(cards);

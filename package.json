@@ -25,6 +25,10 @@
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   },
+  "dependencies": {
+    "@ai-sdk/openai": "^1.0.17",
+    "ai": "^4.0.49"
+  },
   "pkg": {
     "targets": [
       "node18-win-x64"

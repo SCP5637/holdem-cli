@@ -13,6 +13,7 @@ import { renderGameState, renderHandResult, renderAction, renderGameOver, clearS
 import { loadLLMPresets } from './core/llmPresetStore';
 import { LLMPreset } from './types/llm';
 import { logger } from './core/logger';
+import { Card, SUIT_SYMBOLS } from './types/card';
 
 const STARTING_CHIPS = 1000;
 const SMALL_BLIND = 10;
@@ -190,9 +191,13 @@ async function resolveHand(state: GameState): Promise<void> {
   const handDescriptions = new Map<number, string>();
   for (const player of state.players) {
     if (player.isActive) {
-      const allCards = [...player.hand, ...state.communityCards];
-      const evaluation = evaluateHand(allCards);
-      handDescriptions.set(player.id, evaluation.description);
+      if (state.communityCards.length < 5) {
+        handDescriptions.set(player.id, formatHoleCards(player.hand));
+      } else {
+        const allCards = [...player.hand, ...state.communityCards];
+        const evaluation = evaluateHand(allCards);
+        handDescriptions.set(player.id, evaluation.description);
+      }
     }
   }
 
@@ -211,6 +216,18 @@ async function resolveHand(state: GameState): Promise<void> {
  */
 function getActivePlayerCount(state: GameState): number {
   return state.players.filter(p => p.chips > 0 || p.currentBet > 0).length;
+}
+
+function formatHoleCards(cards: Card[]): string {
+  if (cards.length < 2) {
+    return '无效手牌';
+  }
+
+  return `${formatCard(cards[0])} ${formatCard(cards[1])}`;
+}
+
+function formatCard(card: Card): string {
+  return `${card.rank}${SUIT_SYMBOLS[card.suit]}`;
 }
 
 main().catch(console.error);
