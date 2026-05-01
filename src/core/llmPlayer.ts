@@ -118,7 +118,7 @@ async function requestLLMDecision(
     apiKey: preset.apiKey
   });
 
-  const systemPrompt = '你正在操控一个德州扑克电脑玩家。你必须只返回 JSON，不要解释。JSON 格式为 {"action":"fold|check|call|raise|allin","amount":数字可选}。raise 的 amount 表示本轮该玩家最终总下注额，不是额外加注额。只能选择用户提供的 availableActions。';
+  const systemPrompt = '你正在操控一个德州扑克电脑玩家。你必须只返回 JSON，尽快给出答案，不要解释。JSON 格式为 {"action":"fold|check|call|raise|allin","amount":数字可选}。raise 的 amount 表示本轮该玩家最终总下注额，不是额外加注额。只能选择用户提供的 availableActions。';
   const userPrompt = JSON.stringify(createDecisionContext(state, player, availableActions));
 
   logger.logLLMRequest(preset.name, {

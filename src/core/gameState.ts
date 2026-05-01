@@ -22,7 +22,7 @@ export function createGame(config: GameConfig): GameState {
 
     players.push({
       id: i,
-      name: i === config.humanPlayerIndex ? 'You' : llmPresetName ? `Player ${i + 1} [LLM]` : `Player ${i + 1}`,
+      name: i === config.humanPlayerIndex ? 'You' : llmPresetName ? `Player ${i + 1} [${llmPresetName}]` : `Player ${i + 1} [CPU]`,
       chips: config.startingChips,
       hand: [],
       isActive: true,
