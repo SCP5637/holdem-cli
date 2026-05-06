@@ -7,6 +7,7 @@ import * as readline from 'readline';
 import { PlayerAction } from '../types/game';
 import { LLMAssignment, LLMPreset } from '../types/llm';
 import { loadLLMPresets, upsertLLMPreset, deleteLLMPreset } from '../core/llmPresetStore';
+import { RunMode, SeatConfig, SeatType, HostConfig, ClientConfig } from '../types/network';
 
 /**
  * 创建 readline 接口用于用户输入
@@ -40,11 +41,19 @@ export async function getInput(question: string): Promise<string> {
  * @param question - 显示的提示文本
  * @param min - 最小有效值
  * @param max - 最大有效值
+ * @param defaultValue - 默认值（可选）
  * @returns 解析为所选数字的 Promise
  */
-export async function getNumberInput(question: string, min: number, max: number): Promise<number> {
+export async function getNumberInput(question: string, min: number, max: number, defaultValue?: number): Promise<number> {
   while (true) {
-    const input = await getInput(question);
+    const defaultHint = defaultValue !== undefined ? ` (默认: ${defaultValue})` : '';
+    const input = await getInput(question + defaultHint);
+
+    // 如果输入为空且有默认值，返回默认值
+    if (input.trim() === '' && defaultValue !== undefined) {
+      return defaultValue;
+    }
+
     const num = parseInt(input, 10);
 
     if (!isNaN(num) && num >= min && num <= max) {
@@ -108,14 +117,167 @@ function getActionDisplayText(action: PlayerAction): string {
  * @returns 解析为玩家数量和人类玩家位置的 Promise
  */
 export async function getGameConfig(): Promise<{ numPlayers: number; humanPosition: number; llmAssignments: LLMAssignment[] }> {
-  console.log('\n=== 德州扑克 ===\n');
+  console.log('\n=== 本地游戏配置 ===\n');
 
-  const presets = await configureLLMPresets();
+  const presets = await loadLLMPresets();
   const numPlayers = await getNumberInput('输入玩家数量 (2-8): ', 2, 8);
   const humanPosition = await getNumberInput(`输入你的座位位置 (1-${numPlayers}): `, 1, numPlayers);
   const llmAssignments = await configureLLMOpponents(numPlayers, humanPosition - 1, presets);
 
   return { numPlayers, humanPosition: humanPosition - 1, llmAssignments };
+}
+
+/**
+ * 选择运行模式
+ * @returns 运行模式或 null（退出）
+ */
+export async function selectRunMode(): Promise<RunMode | null> {
+  console.log('\n————====+ 德州扑克 +====————\n');
+  console.log('  1. 本地游戏');
+  console.log('  2. 创建联机房间 (主机)');
+  console.log('  3. 加入联机房间 (客户端)');
+  console.log('  8. 管理 LLM API 预设');
+  console.log('  0. 退出');
+
+  const choice = await getNumberInput('输入指令: ', 0, 8);
+
+  switch (choice) {
+    case 0: return null;
+    case 1: return RunMode.Local;
+    case 2: return RunMode.Host;
+    case 3: return RunMode.Client;
+    case 8:
+      await configureLLMPresets();
+      return selectRunMode(); // 递归调用重新显示菜单
+    default: return RunMode.Local;
+  }
+}
+
+/**
+ * 配置主机模式
+ * @returns 主机配置
+ */
+export async function configureHost(): Promise<HostConfig> {
+  console.log('\n--- 创建联机房间 ---\n');
+
+  const presets = await loadLLMPresets();
+  const numPlayers = await getNumberInput('输入玩家数量 (2-8): ', 2, 8);
+  const hostSeatIndex = await getNumberInput(`选择你的座位 (1-${numPlayers}): `, 1, numPlayers) - 1;
+  const port = await getNumberInput('输入监听端口 (1024-65535): ', 1024, 65535, 15637);
+
+  // 配置座位
+  const seats: SeatConfig[] = [];
+  for (let i = 0; i < numPlayers; i++) {
+    if (i === hostSeatIndex) {
+      seats.push({
+        index: i,
+        type: SeatType.Host,
+        name: 'Host',
+        isOccupied: true
+      });
+    } else {
+      seats.push(await configureSeat(i, presets));
+    }
+  }
+
+  return {
+    numPlayers,
+    hostSeatIndex,
+    port,
+    seats
+  };
+}
+
+/**
+ * 配置单个座位
+ */
+async function configureSeat(seatIndex: number, presets: LLMPreset[]): Promise<SeatConfig> {
+  console.log(`\n配置 ${seatIndex + 1} 号位:`);
+  console.log('  1. AI 玩家');
+  console.log('  2. LLM 玩家');
+  console.log('  3. 预留 (远程玩家)');
+
+  const choice = await getNumberInput('选择类型: ', 1, 3);
+
+  switch (choice) {
+    case 1: {
+      const name = `Player ${seatIndex + 1}`;
+      return {
+        index: seatIndex,
+        type: SeatType.AI,
+        name,
+        isOccupied: true
+      };
+    }
+    case 2: {
+      const name = await getRequiredInput('输入 LLM 玩家名称: ', `LLM ${seatIndex + 1}`);
+      return {
+        index: seatIndex,
+        type: SeatType.LLM,
+        name,
+        isOccupied: true
+      };
+    }
+    case 3: {
+      const defaultName = `Player${seatIndex + 1}`;
+      const name = await getRequiredInput(`输入预留座位名称 (默认: ${defaultName}): `, defaultName);
+      return {
+        index: seatIndex,
+        type: SeatType.Remote,
+        name,
+        isOccupied: false
+      };
+    }
+    default: {
+      return {
+        index: seatIndex,
+        type: SeatType.AI,
+        name: `Player ${seatIndex + 1}`,
+        isOccupied: true
+      };
+    }
+  }
+}
+
+/**
+ * 配置客户端模式
+ * @returns 客户端配置
+ */
+export async function configureClient(): Promise<ClientConfig & { seatIndex: number; playerName: string }> {
+  console.log('\n--- 加入联机房间 ---\n');
+
+  const host = await getRequiredInput('输入主机 IP 地址: ');
+  const port = await getNumberInput('输入主机端口: ', 1, 65535);
+
+  return {
+    host,
+    port,
+    seatIndex: -1, // 连接后选择
+    playerName: '' // 连接后输入
+  };
+}
+
+/**
+ * 选择座位并输入名称（客户端）
+ * @param availableSeats 可用座位列表
+ * @returns 选择的座位和名称
+ */
+export async function selectSeatAndName(availableSeats: SeatConfig[]): Promise<{ seatIndex: number; playerName: string }> {
+  console.log('\n可用座位:');
+  availableSeats.forEach((seat, idx) => {
+    console.log(`  ${idx + 1}. ${seat.index + 1}号位 - ${seat.name}`);
+  });
+
+  const choice = await getNumberInput('选择座位: ', 1, availableSeats.length);
+  const selectedSeat = availableSeats[choice - 1];
+
+  const defaultName = selectedSeat.name;
+  const playerName = await getRequiredInput(`输入你的名称 (默认: ${defaultName}): `, defaultName);
+
+  return {
+    seatIndex: selectedSeat.index,
+    playerName
+  };
 }
 
 async function configureLLMPresets(): Promise<LLMPreset[]> {

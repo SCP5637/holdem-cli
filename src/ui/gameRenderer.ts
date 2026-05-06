@@ -96,7 +96,7 @@ export function renderGameState(state: GameState, showAllCards: boolean = false)
 function renderHeader(state: GameState): void {
   const phase = getPhaseDisplay(state.currentPhase);
   console.log('╔══════════════════════════════════════════════════════════════╗');
-  console.log(`║                    德州扑克 - ${phase}                      ║`);
+  console.log(`║                     德州扑克 - ${phase}                      ║`);
   console.log('╚══════════════════════════════════════════════════════════════╝');
   console.log();
 }
