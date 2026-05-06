@@ -5,6 +5,7 @@
 
 import { GameState, Player, GamePhase } from '../types/game';
 import { renderCards } from './cardRenderer';
+import { GOLD_COLOR, RED_COLOR, RESET_COLOR } from '../types/card';
 
 /**
  * 清空控制台屏幕
@@ -130,16 +131,16 @@ function renderPot(state: GameState): void {
   const totalPot = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
 
   console.log('  ┌────────────────────────────────────────────────────────────┐');
-  console.log(`  │  总底池: $${totalPot.toString().padEnd(45 - totalPot.toString().length)}│`);
+  console.log(`  │  总底池: ${GOLD_COLOR}$${totalPot.toString()}${RESET_COLOR}${''.padEnd(43 - totalPot.toString().length)}│`);
 
   if (state.sidePots.length > 0) {
-    console.log(`  │  主底池: $${state.pot.toString().padEnd(45 - state.pot.toString().length)}│`);
+    console.log(`  │  主底池: ${GOLD_COLOR}$${state.pot.toString()}${RESET_COLOR}${''.padEnd(43 - state.pot.toString().length)}│`);
     state.sidePots.forEach((sidePot, index) => {
-      console.log(`  │  边池 ${index + 1}: $${sidePot.amount.toString().padEnd(43 - sidePot.amount.toString().length)}│`);
+      console.log(`  │  边池 ${index + 1}: ${GOLD_COLOR}$${sidePot.amount.toString()}${RESET_COLOR}${''.padEnd(41 - sidePot.amount.toString().length)}│`);
     });
   }
 
-  console.log(`  │  当前下注: $${state.currentBet.toString().padEnd(42 - state.currentBet.toString().length)}│`);
+  console.log(`  │  当前下注: ${GOLD_COLOR}$${state.currentBet.toString()}${RESET_COLOR}${''.padEnd(40 - state.currentBet.toString().length)}│`);
   console.log('  └────────────────────────────────────────────────────────────┘');
   console.log();
 }
@@ -183,7 +184,7 @@ function renderPlayer(player: Player, state: GameState, showCards: boolean): voi
   else if (player.isAllIn) playerStatus = ' (全押)';
 
   const nameLine = `${statusIndicator}${player.name}${positionIndicator}${playerStatus}`;
-  const chipsLine = `     筹码: $${player.chips}  |  当前下注: $${player.currentBet}`;
+  const chipsLine = `     筹码: ${GOLD_COLOR}$${player.chips}${RESET_COLOR}  |  当前下注: ${GOLD_COLOR}$${player.currentBet}${RESET_COLOR}`;
 
   console.log(`  ${nameLine}`);
   console.log(chipsLine);
@@ -239,11 +240,11 @@ export function renderHandResult(
 
   if (winners.length === 1) {
     const winner = state.players.find(p => p.id === winners[0])!;
-    console.log(`  获胜者: ${winner.name} 赢得 $${totalPot}`);
+    console.log(`  获胜者: ${winner.name} 赢得 ${GOLD_COLOR}$${totalPot}${RESET_COLOR}`);
   } else {
     const winnerNames = winners.map(id => state.players.find(p => p.id === id)!.name).join(', ');
     const share = Math.floor(totalPot / winners.length);
-    console.log(`  获胜者: ${winnerNames} 平分底池 (每人 $${share})`);
+    console.log(`  获胜者: ${winnerNames} 平分底池 (每人 ${GOLD_COLOR}$${share}${RESET_COLOR})`);
   }
 
   console.log();
@@ -267,7 +268,7 @@ export function renderAction(playerName: string, action: string, amount?: number
   const actionText = actionMap[action] || action;
   let text = `${playerName} ${actionText}`;
   if (amount !== undefined && amount > 0) {
-    text += ` $${amount}`;
+    text += ` ${GOLD_COLOR}$${amount}${RESET_COLOR}`;
   }
   console.log(`  → ${text}`);
 }
@@ -291,7 +292,7 @@ export function renderGameOver(state: GameState): void {
   for (let i = 0; i < sortedPlayers.length; i++) {
     const player = sortedPlayers[i];
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '  ';
-    console.log(`  ${medal} ${i + 1}. ${player.name}: $${player.chips}`);
+    console.log(`  ${medal} ${i + 1}. ${player.name}: ${GOLD_COLOR}$${player.chips}${RESET_COLOR}`);
   }
 
   console.log();
@@ -312,4 +313,34 @@ function getPhaseDisplay(phase: GamePhase): string {
   };
 
   return phaseMap[phase];
+}
+
+/**
+ * 显示阶段过渡动画（红色文字 + 动态省略号）
+ * @param durationMs - 动画持续时间（毫秒）
+ * @returns 动画结束后的 Promise
+ */
+export async function showPhaseTransitionAnimation(durationMs: number = 5000): Promise<void> {
+  const frames = ['', '.', '..', '...'];
+  const interval = 500;
+  let currentFrame = 0;
+  let elapsed = 0;
+
+  process.stdout.write('\x1B[?25l');
+
+  return new Promise((resolve) => {
+    const timer = setInterval(() => {
+      const text = `  ${RED_COLOR}进入下一阶段${frames[currentFrame]}${RESET_COLOR}`;
+      process.stdout.write(`\r${text.padEnd(50, ' ')}`);
+      currentFrame = (currentFrame + 1) % frames.length;
+      elapsed += interval;
+
+      if (elapsed >= durationMs) {
+        clearInterval(timer);
+        process.stdout.write('\r'.padEnd(50, ' ') + '\r');
+        process.stdout.write('\x1B[?25h');
+        resolve();
+      }
+    }, interval);
+  });
 }

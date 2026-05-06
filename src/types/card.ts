@@ -82,3 +82,13 @@ export const SUIT_COLORS: Record<Suit, string> = {
 };
 
 export const RESET_COLOR = '\x1b[0m';
+
+/**
+ * 金色字体颜色代码（用于筹码显示）
+ */
+export const GOLD_COLOR = '\x1b[33m';
+
+/**
+ * 红色字体颜色代码（用于警告/过渡提示）
+ */
+export const RED_COLOR = '\x1b[31m';

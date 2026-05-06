@@ -24,7 +24,8 @@ import {
   renderAction,
   renderGameOver,
   clearScreen,
-  startWaitingAnimation
+  startWaitingAnimation,
+  showPhaseTransitionAnimation
 } from './ui/gameRenderer';
 import {
   renderRemoteGameState,
@@ -510,6 +511,8 @@ async function playHandHost(state: GameState, llmPresetMap: Map<string, LLMPrese
 
     if (isBettingRoundComplete(state)) {
       const prevPhase = state.currentPhase;
+      await showPhaseTransitionAnimation(5000);
+      clearScreen();
       advancePhase(state);
       logger.logPhaseChange(prevPhase, state.currentPhase);
       renderGameState(state);
@@ -695,6 +698,8 @@ async function playHand(state: GameState, llmPresetMap: Map<string, LLMPreset>):
 
     if (isBettingRoundComplete(state)) {
       const prevPhase = state.currentPhase;
+      await showPhaseTransitionAnimation(5000);
+      clearScreen();
       advancePhase(state);
       logger.logPhaseChange(prevPhase, state.currentPhase);
       renderGameState(state);
