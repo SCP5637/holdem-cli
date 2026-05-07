@@ -100,13 +100,13 @@ async function main(): Promise<void> {
  * 运行本地游戏（原逻辑）
  */
 async function runLocalGame(): Promise<void> {
-  const { numPlayers, humanPosition, llmAssignments } = await getGameConfig();
+  const { numPlayers, humanPosition, startingChips, smallBlind, bigBlind, llmAssignments } = await getGameConfig();
 
   const config: GameConfig = {
     numPlayers,
-    startingChips: STARTING_CHIPS,
-    smallBlind: SMALL_BLIND,
-    bigBlind: BIG_BLIND,
+    startingChips,
+    smallBlind,
+    bigBlind,
     humanPlayerIndex: humanPosition,
     llmAssignments
   };
@@ -241,9 +241,9 @@ async function runHostGame(): Promise<void> {
 
   const config: GameConfig = {
     numPlayers: hostConfig.numPlayers,
-    startingChips: STARTING_CHIPS,
-    smallBlind: SMALL_BLIND,
-    bigBlind: BIG_BLIND,
+    startingChips: hostConfig.startingChips,
+    smallBlind: hostConfig.smallBlind,
+    bigBlind: hostConfig.bigBlind,
     humanPlayerIndex: hostConfig.hostSeatIndex,
     llmAssignments
   };

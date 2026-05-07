@@ -214,6 +214,9 @@ export interface HostConfig {
   hostSeatIndex: number;
   port: number;
   seats: SeatConfig[];
+  startingChips: number;
+  smallBlind: number;
+  bigBlind: number;
 }
 
 /**

@@ -27,6 +27,7 @@ holdem/
 # IDE
 .vscode/
 .idea/
+.trae/
 *.swp
 *.swo
 *~

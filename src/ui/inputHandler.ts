@@ -114,17 +114,23 @@ function getActionDisplayText(action: PlayerAction): string {
 
 /**
  * 提示用户输入初始游戏配置
- * @returns 解析为玩家数量和人类玩家位置的 Promise
+ * @returns 解析为玩家数量、人类玩家位置、初始筹码和盲注的 Promise
  */
-export async function getGameConfig(): Promise<{ numPlayers: number; humanPosition: number; llmAssignments: LLMAssignment[] }> {
+export async function getGameConfig(): Promise<{ numPlayers: number; humanPosition: number; startingChips: number; smallBlind: number; bigBlind: number; llmAssignments: LLMAssignment[] }> {
   console.log('\n=== 本地游戏配置 ===\n');
 
   const presets = await loadLLMPresets();
   const numPlayers = await getNumberInput('输入玩家数量 (2-8): ', 2, 8);
   const humanPosition = await getNumberInput(`输入你的座位位置 (1-${numPlayers}): `, 1, numPlayers);
+
+  console.log('\n--- 筹码与盲注设置 ---');
+  const startingChips = await getNumberInput('输入初始筹码数 (100-100000, 默认: 1000): ', 100, 100000, 1000);
+  const smallBlind = await getNumberInput('输入小盲注金额 (1-10000, 默认: 10): ', 1, 10000, 10);
+  const bigBlind = smallBlind * 2;
+
   const llmAssignments = await configureLLMOpponents(numPlayers, humanPosition - 1, presets);
 
-  return { numPlayers, humanPosition: humanPosition - 1, llmAssignments };
+  return { numPlayers, humanPosition: humanPosition - 1, startingChips, smallBlind, bigBlind, llmAssignments };
 }
 
 /**
@@ -165,6 +171,11 @@ export async function configureHost(): Promise<HostConfig> {
   const hostSeatIndex = await getNumberInput(`选择你的座位 (1-${numPlayers}): `, 1, numPlayers) - 1;
   const port = await getNumberInput('输入监听端口 (1024-65535): ', 1024, 65535, 15637);
 
+  console.log('\n--- 筹码与盲注设置 ---');
+  const startingChips = await getNumberInput('输入初始筹码数 (100-100000, 默认: 1000): ', 100, 100000, 1000);
+  const smallBlind = await getNumberInput('输入小盲注金额 (1-10000, 默认: 10): ', 1, 10000, 10);
+  const bigBlind = smallBlind * 2;
+
   // 配置座位
   const seats: SeatConfig[] = [];
   for (let i = 0; i < numPlayers; i++) {
@@ -184,7 +195,10 @@ export async function configureHost(): Promise<HostConfig> {
     numPlayers,
     hostSeatIndex,
     port,
-    seats
+    seats,
+    startingChips,
+    smallBlind,
+    bigBlind
   };
 }
 
