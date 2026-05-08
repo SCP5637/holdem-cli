@@ -3,10 +3,11 @@
  * 处理游戏初始化、下注轮和状态转换
  */
 
-import { GameState, Player, GamePhase, GameConfig, PlayerAction, HandResult, SidePot } from '../types/game';
+import { GameState, Player, GamePhase, GameConfig, PlayerAction, HandResult, SidePot, AIDifficulty } from '../types/game';
 import { Card } from '../types/card';
 import { createShuffledDeck, dealCards } from './deck';
 import { evaluateHand, determineWinners } from './handEvaluator';
+import { getRandomStrategy } from './ai/index';
 
 /**
  * 使用指定配置创建新游戏
@@ -19,15 +20,41 @@ export function createGame(config: GameConfig): GameState {
 
   for (let i = 0; i < config.numPlayers; i++) {
     const llmPresetName = llmAssignmentMap.get(i);
+    const isHuman = i === config.humanPlayerIndex;
+    const difficulty = config.aiDifficulties?.get(i);
+
+    // AI玩家: 按难度随机选策略
+    let aiStrategy: string | undefined;
+    let aiDifficulty: AIDifficulty | undefined;
+    if (!isHuman && !llmPresetName) {
+      aiDifficulty = difficulty ?? AIDifficulty.Medium;
+      aiStrategy = getRandomStrategy(aiDifficulty).metadata.name;
+    }
+
+    // 名称后缀
+    let name: string;
+    if (isHuman) {
+      name = 'You';
+    } else if (llmPresetName) {
+      name = `Player ${i + 1} [${llmPresetName}]`;
+    } else {
+      const diffLabel = aiDifficulty === AIDifficulty.Low ? 'Lo' :
+                        aiDifficulty === AIDifficulty.Medium ? 'Md' :
+                        aiDifficulty === AIDifficulty.High ? 'Hi' :
+                        aiDifficulty === AIDifficulty.Ultra ? 'Ul' : 'Mx';
+      name = `Player ${i + 1} [${diffLabel}:${aiStrategy}]`;
+    }
 
     players.push({
       id: i,
-      name: i === config.humanPlayerIndex ? 'You' : llmPresetName ? `Player ${i + 1} [${llmPresetName}]` : `Player ${i + 1} [CPU]`,
+      name,
       chips: config.startingChips,
       hand: [],
       isActive: true,
-      isHuman: i === config.humanPlayerIndex,
+      isHuman,
       llmPresetName,
+      aiDifficulty,
+      aiStrategy,
       currentBet: 0,
       hasActed: false,
       isAllIn: false

@@ -7,6 +7,25 @@ import { Card } from './card';
 import { LLMAssignment } from './llm';
 
 /**
+ * AI难度等级
+ */
+export enum AIDifficulty {
+  Low = 'low',
+  Medium = 'medium',
+  High = 'high',
+  Ultra = 'ultra',
+  Max = 'max'
+}
+
+export const DIFFICULTY_LABELS: Record<AIDifficulty, string> = {
+  [AIDifficulty.Low]: 'Low (初级)',
+  [AIDifficulty.Medium]: 'Medium (中级)',
+  [AIDifficulty.High]: 'High (高级)',
+  [AIDifficulty.Ultra]: 'Ultra (超级)',
+  [AIDifficulty.Max]: 'Max (极限)'
+};
+
+/**
  * 下注轮中可用的玩家动作
  */
 export enum PlayerAction {
@@ -39,6 +58,8 @@ export interface Player {
   isActive: boolean;
   isHuman: boolean;
   llmPresetName?: string;
+  aiDifficulty?: AIDifficulty;
+  aiStrategy?: string;
   currentBet: number;
   hasActed: boolean;
   isAllIn: boolean;
@@ -112,4 +133,5 @@ export interface GameConfig {
   bigBlind: number;
   humanPlayerIndex: number;
   llmAssignments?: LLMAssignment[];
+  aiDifficulties?: Map<number, AIDifficulty>;
 }

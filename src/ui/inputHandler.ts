@@ -4,7 +4,7 @@
  */
 
 import * as readline from 'readline';
-import { PlayerAction } from '../types/game';
+import { PlayerAction, AIDifficulty } from '../types/game';
 import { LLMAssignment, LLMPreset } from '../types/llm';
 import { loadLLMPresets, upsertLLMPreset, deleteLLMPreset } from '../core/llmPresetStore';
 import { RunMode, SeatConfig, SeatType, HostConfig, ClientConfig } from '../types/network';
@@ -116,7 +116,7 @@ function getActionDisplayText(action: PlayerAction): string {
  * 提示用户输入初始游戏配置
  * @returns 解析为玩家数量、人类玩家位置、初始筹码和盲注的 Promise
  */
-export async function getGameConfig(): Promise<{ numPlayers: number; humanPosition: number; startingChips: number; smallBlind: number; bigBlind: number; llmAssignments: LLMAssignment[] }> {
+export async function getGameConfig(): Promise<{ numPlayers: number; humanPosition: number; startingChips: number; smallBlind: number; bigBlind: number; llmAssignments: LLMAssignment[]; aiDifficulties: Map<number, AIDifficulty> }> {
   console.log('\n=== 本地游戏配置 ===\n');
 
   const presets = await loadLLMPresets();
@@ -128,9 +128,9 @@ export async function getGameConfig(): Promise<{ numPlayers: number; humanPositi
   const smallBlind = await getNumberInput('输入小盲注金额 (1-10000, 默认: 10): ', 1, 10000, 10);
   const bigBlind = smallBlind * 2;
 
-  const llmAssignments = await configureLLMOpponents(numPlayers, humanPosition - 1, presets);
+  const { llmAssignments, aiDifficulties } = await configureOpponents(numPlayers, humanPosition - 1, presets);
 
-  return { numPlayers, humanPosition: humanPosition - 1, startingChips, smallBlind, bigBlind, llmAssignments };
+  return { numPlayers, humanPosition: humanPosition - 1, startingChips, smallBlind, bigBlind, llmAssignments, aiDifficulties };
 }
 
 /**
@@ -215,12 +215,14 @@ async function configureSeat(seatIndex: number, presets: LLMPreset[]): Promise<S
 
   switch (choice) {
     case 1: {
+      const difficulty = await selectDifficulty();
       const name = `Player ${seatIndex + 1}`;
       return {
         index: seatIndex,
         type: SeatType.AI,
         name,
-        isOccupied: true
+        isOccupied: true,
+        aiDifficulty: difficulty
       };
     }
     case 2: {
@@ -515,38 +517,50 @@ async function getMaxTokensInput(defaultValue?: number): Promise<number | undefi
   }
 }
 
-async function configureLLMOpponents(numPlayers: number, humanPosition: number, presets: LLMPreset[]): Promise<LLMAssignment[]> {
-  if (presets.length === 0) {
-    return [];
-  }
-
-  const useLLM = await getYesNoInput('是否为电脑对手指定 LLM 控制？(y/N): ', false);
-
-  if (!useLLM) {
-    return [];
-  }
-
-  const assignments: LLMAssignment[] = [];
+async function configureOpponents(numPlayers: number, humanPosition: number, presets: LLMPreset[]): Promise<{ llmAssignments: LLMAssignment[]; aiDifficulties: Map<number, AIDifficulty> }> {
+  const llmAssignments: LLMAssignment[] = [];
+  const aiDifficulties = new Map<number, AIDifficulty>();
 
   for (let i = 0; i < numPlayers; i++) {
     if (i === humanPosition) {
       continue;
     }
 
-    console.log(`\nPlayer ${i + 1}:`);
-    console.log('  0. 普通 AI');
-    presets.forEach((preset, index) => {
-      console.log(`  ${index + 1}. ${preset.name} (${preset.model})`);
-    });
+    console.log(`\n座位 ${i + 1}:`);
 
-    const choice = await getNumberInput('选择控制方式: ', 0, presets.length);
+    // 如果有LLM预设，允许选择
+    if (presets.length > 0) {
+      console.log('  0. 普通 AI (选择难度)');
+      presets.forEach((preset, index) => {
+        console.log(`  ${index + 1}. LLM: ${preset.name} (${preset.model})`);
+      });
 
-    if (choice > 0) {
-      assignments.push({ playerIndex: i, presetName: presets[choice - 1].name });
+      const choice = await getNumberInput('选择控制方式: ', 0, presets.length);
+
+      if (choice > 0) {
+        llmAssignments.push({ playerIndex: i, presetName: presets[choice - 1].name });
+        continue;
+      }
     }
+
+    // AI对手: 选择难度
+    const difficulty = await selectDifficulty();
+    aiDifficulties.set(i, difficulty);
   }
 
-  return assignments;
+  return { llmAssignments, aiDifficulties };
+}
+
+async function selectDifficulty(): Promise<AIDifficulty> {
+  console.log('  选择 AI 难度:');
+  console.log('    1. Low (初级) — 被动保守，易击败');
+  console.log('    2. Medium (中级) — 基础扎实，偶有诈唬');
+  console.log('    3. High (高级) — 数学正确，权益驱动');
+  console.log('    4. Ultra (超级) — GTO平衡，对手建模');
+  console.log('    5. Max (极限) — 全技术融合，最强挑战');
+  const choice = await getNumberInput('  选择难度 (1-5, 默认: 2): ', 1, 5, 2);
+  const difficulties = [AIDifficulty.Low, AIDifficulty.Medium, AIDifficulty.High, AIDifficulty.Ultra, AIDifficulty.Max];
+  return difficulties[choice - 1];
 }
 
 async function getRequiredInput(question: string, defaultValue?: string): Promise<string> {

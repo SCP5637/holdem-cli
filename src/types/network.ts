@@ -3,7 +3,7 @@
  * 定义联机游戏的消息协议和数据结构
  */
 
-import { GameState, PlayerAction } from './game';
+import { GameState, PlayerAction, AIDifficulty } from './game';
 
 /**
  * 运行模式
@@ -194,6 +194,7 @@ export interface SeatConfig {
   name: string;
   isOccupied: boolean;
   socketId?: string;
+  aiDifficulty?: AIDifficulty;
 }
 
 /**

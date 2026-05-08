@@ -4,7 +4,7 @@
  * 支持本地游戏、主机模式和客户端模式
  */
 
-import { GameState, GameConfig, PlayerAction, GamePhase, Player } from './types/game';
+import { GameState, GameConfig, PlayerAction, GamePhase, Player, AIDifficulty } from './types/game';
 import { createGame, executeAction, nextPlayer, isBettingRoundComplete, advancePhase, determineHandWinners, awardPot, isHandOver, prepareNewHand, getCurrentPlayer, getAvailableActions } from './core/gameState';
 import { getAIAction } from './core/aiPlayer';
 import { getLLMAction } from './core/llmPlayer';
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
  * 运行本地游戏（原逻辑）
  */
 async function runLocalGame(): Promise<void> {
-  const { numPlayers, humanPosition, startingChips, smallBlind, bigBlind, llmAssignments } = await getGameConfig();
+  const { numPlayers, humanPosition, startingChips, smallBlind, bigBlind, llmAssignments, aiDifficulties } = await getGameConfig();
 
   const config: GameConfig = {
     numPlayers,
@@ -108,7 +108,8 @@ async function runLocalGame(): Promise<void> {
     smallBlind,
     bigBlind,
     humanPlayerIndex: humanPosition,
-    llmAssignments
+    llmAssignments,
+    aiDifficulties
   };
 
   logger.info('GAME', '游戏配置', config);
@@ -239,13 +240,21 @@ async function runHostGame(): Promise<void> {
     .filter(s => s.type === SeatType.LLM)
     .map(s => ({ playerIndex: s.index, presetName: s.name }));
 
+  const aiDifficulties = new Map<number, AIDifficulty>();
+  for (const seat of hostConfig.seats) {
+    if (seat.type === SeatType.AI && seat.aiDifficulty) {
+      aiDifficulties.set(seat.index, seat.aiDifficulty);
+    }
+  }
+
   const config: GameConfig = {
     numPlayers: hostConfig.numPlayers,
     startingChips: hostConfig.startingChips,
     smallBlind: hostConfig.smallBlind,
     bigBlind: hostConfig.bigBlind,
     humanPlayerIndex: hostConfig.hostSeatIndex,
-    llmAssignments
+    llmAssignments,
+    aiDifficulties
   };
 
   const llmPresets = await loadLLMPresets();
