@@ -136,16 +136,25 @@ export async function getAIAction(state: GameState): Promise<{ action: PlayerAct
   return strategy.decide(ctx);
 }
 
+/** 记录单个玩家动作到对手模型 */
+export function recordPlayerAction(playerId: number, action: PlayerAction, toCall: number, pot: number): void {
+  getOpponentModel().recordAction(playerId, action, toCall, pot);
+}
+
 /** 记录对手动作到对手模型 */
 function recordOpponentActions(state: GameState): void {
   const om = getOpponentModel();
   for (const p of state.players) {
     if (p.isHuman) {
-      // 记录人类玩家的动作供AI剥削
       const toCall = state.currentBet - p.currentBet;
-      om.recordAction(p.id, PlayerAction.Check, toCall, state.pot); // simplified
+      om.recordAction(p.id, PlayerAction.Check, toCall, state.pot);
     }
   }
+}
+
+/** 获取对手模型实例 (供LLM上下文使用) */
+export function getOpponentModelInstance(): OpponentModelInterface {
+  return getOpponentModel();
 }
 
 /** 重置对手模型 (新游戏时调用) */
@@ -154,4 +163,4 @@ export function resetOpponentModel(): void {
 }
 
 export { AIDifficulty, DIFFICULTY_LABELS };
-export type { AIStrategy, AIDecisionContext };
+export type { AIStrategy, AIDecisionContext, OpponentModelInterface };

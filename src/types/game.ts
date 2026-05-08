@@ -66,6 +66,18 @@ export interface Player {
 }
 
 /**
+ * 手牌中的动作记录
+ */
+export interface ActionRecord {
+  handNumber: number;
+  phase: GamePhase;
+  playerId: number;
+  playerName: string;
+  action: PlayerAction;
+  amount?: number;
+}
+
+/**
  * 边池结构
  * 当玩家All-In时，如果其下注金额少于其他玩家，会创建边池
  */
@@ -95,6 +107,8 @@ export interface GameState {
   minRaise: number;
   deck: Card[];
   handNumber: number;
+  /** 本手牌动作历史 */
+  actionLog: ActionRecord[];
 }
 
 /**

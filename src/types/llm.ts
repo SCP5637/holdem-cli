@@ -4,7 +4,6 @@ export interface LLMPreset {
   apiKey: string;
   model: string;
   temperature?: number;
-  maxTokens?: number;
   maxThinkingTimeMs?: number;
   customPrompt?: string;
 }

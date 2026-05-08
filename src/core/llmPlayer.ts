@@ -2,6 +2,7 @@ import { Card, RANK_VALUES, SUIT_SYMBOLS } from '../types/card';
 import { GamePhase, GameState, Player, PlayerAction } from '../types/game';
 import { LLMPreset } from '../types/llm';
 import { getAvailableActions, getCurrentPlayer } from './gameState';
+import { getOpponentModelInstance } from './ai/index';
 import { getAIAction } from './aiPlayer';
 import { logger } from './logger';
 import { generateText } from 'ai';
@@ -15,6 +16,8 @@ type LLMActionResponse = {
 const ACTION_VALUES = new Set<string>(Object.values(PlayerAction));
 const DEFAULT_MAX_THINKING_TIME_MS = 30000;
 const MAX_RETRY_COUNT = 3;
+/** 扑克决策JSON最多~100 tokens，1024已足够 */
+const OUTPUT_TOKENS = 1024;
 
 export async function getLLMAction(state: GameState, preset: LLMPreset): Promise<{ action: PlayerAction; amount?: number }> {
   const player = getCurrentPlayer(state);
@@ -70,8 +73,14 @@ export async function getLLMAction(state: GameState, preset: LLMPreset): Promise
     } catch (error) {
       lastError = error as Error;
       const isTimeout = lastError.message.includes('超时');
+      const isConfigError = /invalid|unsupported|not found|unauthorized|max_tokens|超出/i.test(lastError.message);
       console.log(`  [LLM] 尝试 ${attempt}/${MAX_RETRY_COUNT} 失败: ${lastError.message}${isTimeout ? ' (超时)' : ''}`);
       logger.logLLMError(preset.name, lastError);
+
+      // 配置错误不重试
+      if (isConfigError) {
+        break;
+      }
 
       if (attempt < MAX_RETRY_COUNT) {
         const delayMs = Math.min(1000 * attempt, 3000);
@@ -118,7 +127,18 @@ async function requestLLMDecision(
     apiKey: preset.apiKey
   });
 
-  const baseSystemPrompt = '你正在操控一个德州扑克电脑玩家。你必须只返回 JSON，尽快分析并给出答案，不需要解释和其他描述。JSON 格式为 {"action":"fold|check|call|raise|allin","amount":数字可选}。raise 的 amount 表示本轮该玩家最终总下注额，不是额外加注额。只能选择用户提供的 availableActions。';
+  const baseSystemPrompt = `你正在操控一个德州扑克电脑玩家。你必须只返回 JSON，尽快分析并给出答案，不需要解释和其他描述。
+
+JSON 格式: {"action":"fold|check|call|raise|allin","amount":数字可选}
+- raise 的 amount 表示本轮该玩家最终总下注额，不是额外加注额
+- 只能选择 availableActions 中提供的动作
+- 结合 handHistory 理解牌局发展，结合 opponentStats 针对性剥削
+
+对手统计解读:
+- vpip (入池率): <0.15=极紧, 0.15-0.25=偏紧, 0.25-0.35=偏松, >0.35=极松
+- pfr (翻前加注率): 接近vpip=激进, 远低vpip=被动跟注
+- af (侵略因子): <1=被动, 1-2=适中, >2=激进
+- archetype: nit=紧弱(多诈唬施压), tag=紧凶(正常应对), lag=松凶(设陷阱诱捕), maniac=疯狂(耐心等好牌), callingStation=跟注站(价值下注别诈唬), unknown=信息不足(正常打)`;
   const systemPrompt = preset.customPrompt
     ? `${baseSystemPrompt}\n\n--- 附加提示词 ---\n${preset.customPrompt}`
     : baseSystemPrompt;
@@ -128,7 +148,7 @@ async function requestLLMDecision(
     baseUrl,
     model: preset.model,
     temperature: preset.temperature ?? 1,
-    maxTokens: preset.maxTokens ?? 120,
+    maxTokens: OUTPUT_TOKENS,
     system: systemPrompt,
     prompt: userPrompt
   });
@@ -137,7 +157,7 @@ async function requestLLMDecision(
     const result = await generateText({
       model: openai(preset.model),
       temperature: preset.temperature ?? 1,
-      maxTokens: preset.maxTokens ?? 120,
+      maxTokens: OUTPUT_TOKENS,
       system: systemPrompt,
       prompt: userPrompt
     });
@@ -161,10 +181,40 @@ async function requestLLMDecision(
 }
 
 function createDecisionContext(state: GameState, player: Player, availableActions: PlayerAction[]): object {
-  // 计算总底池（主底池 + 所有边池）
   const totalPot = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
 
+  // 构建手牌历史
+  const handHistory = state.actionLog.map(a => ({
+    phase: getPhaseName(a.phase),
+    player: a.playerName,
+    action: a.action,
+    amount: a.amount
+  }));
+
+  // 构建对手统计
+  const om = getOpponentModelInstance();
+  const opponentStats = state.players
+    .filter(p => p.id !== player.id)
+    .map(p => {
+      const stats = om.getStats(p.id);
+      const archetype = om.getArchetype(p.id);
+      return {
+        name: p.name,
+        chips: p.chips,
+        isActive: p.isActive,
+        isAllIn: p.isAllIn,
+        stats: {
+          handsPlayed: stats.handsPlayed,
+          vpip: Number(stats.vpip.toFixed(2)),
+          pfr: Number(stats.pfr.toFixed(2)),
+          aggression: Number(stats.af.toFixed(1)),
+          archetype
+        }
+      };
+    });
+
   return {
+    handNumber: state.handNumber,
     phase: getPhaseName(state.currentPhase),
     availableActions,
     rules: {
@@ -188,6 +238,7 @@ function createDecisionContext(state: GameState, player: Player, availableAction
       currentBet: player.currentBet,
       hand: player.hand.map(formatCard)
     },
+    handHistory,
     players: state.players.map(item => ({
       name: item.name,
       chips: item.chips,
@@ -196,7 +247,8 @@ function createDecisionContext(state: GameState, player: Player, availableAction
       isAllIn: item.isAllIn,
       isDealer: item.id === state.dealerIndex,
       isSelf: item.id === player.id
-    }))
+    })),
+    opponentStats
   };
 }
 

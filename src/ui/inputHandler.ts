@@ -362,7 +362,6 @@ async function getLLMPresetInput(
   const apiKey = await getApiKeyInput(existingPreset?.apiKey);
   const model = await getRequiredInput('模型名称，例如 gpt-4o-mini: ', existingPreset?.model);
   const temperature = await getTemperatureInput(existingPreset?.temperature);
-  const maxTokensInput = await getMaxTokensInput(existingPreset?.maxTokens);
 
   let customPrompt: string | undefined = existingPreset?.customPrompt;
   const useCustomPrompt = await getYesNoInput('是否设定自定义提示词？(y/N): ', false);
@@ -377,7 +376,6 @@ async function getLLMPresetInput(
     apiKey,
     model,
     temperature,
-    maxTokens: maxTokensInput,
     customPrompt
   };
 }
@@ -469,52 +467,6 @@ function maskApiKey(apiKey: string): string {
     return '***';
   }
   return apiKey.slice(0, 4) + '...' + apiKey.slice(-4);
-}
-
-async function getMaxTokensInput(defaultValue?: number): Promise<number | undefined> {
-  const MAX_TOKENS_LIMIT = 1000000;
-
-  while (true) {
-    const prompt = defaultValue !== undefined
-      ? `max tokens，可留空默认 ${defaultValue}: `
-      : 'max tokens，可留空默认 120，支持 k/m 单位 (如 4k, 1m): ';
-    const input = (await getInput(prompt)).trim().toLowerCase();
-
-    if (input === '') {
-      return defaultValue;
-    }
-
-    let value: number;
-
-    if (input.endsWith('m')) {
-      const num = parseFloat(input.slice(0, -1));
-      if (isNaN(num) || num < 0) {
-        console.log('输入无效，请输入正数或带 k/m 单位的数值。');
-        continue;
-      }
-      value = Math.floor(num * 1000000);
-    } else if (input.endsWith('k')) {
-      const num = parseFloat(input.slice(0, -1));
-      if (isNaN(num) || num < 0) {
-        console.log('输入无效，请输入正数或带 k/m 单位的数值。');
-        continue;
-      }
-      value = Math.floor(num * 1000);
-    } else {
-      value = parseInt(input, 10);
-      if (isNaN(value) || value < 0) {
-        console.log('输入无效，请输入正整数或带 k/m 单位的数值。');
-        continue;
-      }
-    }
-
-    if (value > MAX_TOKENS_LIMIT) {
-      console.log(`max tokens 不能超过 1M (${MAX_TOKENS_LIMIT})，请重新输入。`);
-      continue;
-    }
-
-    return value;
-  }
 }
 
 async function configureOpponents(numPlayers: number, humanPosition: number, presets: LLMPreset[]): Promise<{ llmAssignments: LLMAssignment[]; aiDifficulties: Map<number, AIDifficulty> }> {

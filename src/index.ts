@@ -6,7 +6,7 @@
 
 import { GameState, GameConfig, PlayerAction, GamePhase, Player, AIDifficulty } from './types/game';
 import { createGame, executeAction, nextPlayer, isBettingRoundComplete, advancePhase, determineHandWinners, awardPot, isHandOver, prepareNewHand, getCurrentPlayer, getAvailableActions } from './core/gameState';
-import { getAIAction } from './core/aiPlayer';
+import { getAIAction, recordPlayerAction } from './core/aiPlayer';
 import { getLLMAction } from './core/llmPlayer';
 import { evaluateHand } from './core/handEvaluator';
 import {
@@ -565,10 +565,13 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
         const action = await waitForRemoteAction();
 
         if (action) {
+          const toCall = state.currentBet - player.currentBet;
+          const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
           const success = executeAction(state, action.action, action.amount);
           gameServer!.sendActionResult(player.id, success, action.action, action.amount);
 
           if (success) {
+            recordPlayerAction(player.id, action.action, toCall, potBefore);
             renderAction(player.name, action.action, action.amount);
             logger.logGameAction(player.name, action.action, action.amount);
           }
@@ -578,9 +581,12 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
         const action = await getPlayerAction(getAvailableActions(state));
 
         if (action) {
+          const toCall = state.currentBet - player.currentBet;
+          const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
           const success = executeAction(state, action.action, action.amount);
 
           if (success) {
+            recordPlayerAction(player.id, action.action, toCall, potBefore);
             renderAction(player.name, action.action, action.amount);
             logger.logGameAction(player.name, action.action, action.amount);
           }
@@ -599,9 +605,12 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
         }
 
         if (action) {
+          const toCall = state.currentBet - player.currentBet;
+          const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
           const success = executeAction(state, action.action, action.amount);
 
           if (success) {
+            recordPlayerAction(player.id, action.action, toCall, potBefore);
             renderAction(player.name, action.action, action.amount);
             logger.logGameAction(player.name, action.action, action.amount);
           }
@@ -748,9 +757,12 @@ async function playBettingRound(state: GameState, llmPresetMap: Map<string, LLMP
       }
 
       if (action) {
+        const toCall = state.currentBet - player.currentBet;
+        const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
         const success = executeAction(state, action.action, action.amount);
 
         if (success) {
+          recordPlayerAction(player.id, action.action, toCall, potBefore);
           renderAction(player.name, action.action, action.amount);
           logger.logGameAction(player.name, action.action, action.amount);
         }

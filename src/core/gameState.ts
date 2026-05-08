@@ -3,7 +3,7 @@
  * 处理游戏初始化、下注轮和状态转换
  */
 
-import { GameState, Player, GamePhase, GameConfig, PlayerAction, HandResult, SidePot, AIDifficulty } from '../types/game';
+import { GameState, Player, GamePhase, GameConfig, PlayerAction, HandResult, SidePot, AIDifficulty, ActionRecord } from '../types/game';
 import { Card } from '../types/card';
 import { createShuffledDeck, dealCards } from './deck';
 import { evaluateHand, determineWinners } from './handEvaluator';
@@ -76,7 +76,8 @@ export function createGame(config: GameConfig): GameState {
     currentBet: 0,
     minRaise: config.bigBlind,
     deck,
-    handNumber: 1
+    handNumber: 1,
+    actionLog: []
   };
 
   postBlinds(state);
@@ -339,6 +340,15 @@ export function executeAction(state: GameState, action: PlayerAction, amount?: n
       break;
   }
 
+  state.actionLog.push({
+    handNumber: state.handNumber,
+    phase: state.currentPhase,
+    playerId: player.id,
+    playerName: player.name,
+    action,
+    amount
+  });
+
   player.hasActed = true;
   return true;
 }
@@ -532,6 +542,8 @@ export function prepareNewHand(state: GameState): void {
   }
 
   state.dealerIndex = (state.dealerIndex + 1) % state.players.length;
+
+  state.actionLog = [];
 
   postBlinds(state);
   dealHoleCards(state);
