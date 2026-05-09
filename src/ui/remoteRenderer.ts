@@ -7,6 +7,7 @@ import { SerializedGameState, SerializedPlayer, SerializedCard } from '../types/
 import { GamePhase, PlayerAction } from '../types/game';
 import { renderCards } from './cardRenderer';
 import { SUIT_SYMBOLS, Suit, Rank, Card } from '../types/card';
+import { padVisual, centerVisual } from './terminal';
 
 /**
  * 清空控制台屏幕
@@ -42,10 +43,12 @@ export function renderRemoteGameState(
  * @param gameState - 游戏状态
  */
 function renderHeader(gameState: SerializedGameState): void {
+  const BOX_W = 60;
   const phase = getPhaseDisplay(gameState.currentPhase as GamePhase);
-  console.log('╔══════════════════════════════════════════════════════════════╗');
-  console.log(`║                     德州扑克 - ${phase}                      ║`);
-  console.log('╚══════════════════════════════════════════════════════════════╝');
+  const title = centerVisual(`德州扑克 - ${phase}`, BOX_W);
+  console.log('╔' + '═'.repeat(BOX_W) + '╗');
+  console.log('║' + title + '║');
+  console.log('╚' + '═'.repeat(BOX_W) + '╝');
   console.log();
 }
 
@@ -77,19 +80,24 @@ function renderCommunityCards(gameState: SerializedGameState): void {
  */
 function renderPot(gameState: SerializedGameState): void {
   const totalPot = gameState.pot + gameState.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+  const BOX_W = 58;
 
-  console.log('  ┌────────────────────────────────────────────────────────────┐');
-  console.log(`  │  总底池: $${totalPot.toString().padEnd(45 - totalPot.toString().length)}│`);
+  function line(content: string): string {
+    return `  │  ${padVisual(content, BOX_W)}│`;
+  }
+
+  console.log(`  ┌${'─'.repeat(BOX_W + 2)}┐`);
+  console.log(line(`总底池: $${totalPot}`));
 
   if (gameState.sidePots.length > 0) {
-    console.log(`  │  主底池: $${gameState.pot.toString().padEnd(45 - gameState.pot.toString().length)}│`);
+    console.log(line(`主底池: $${gameState.pot}`));
     gameState.sidePots.forEach((sidePot, index) => {
-      console.log(`  │  边池 ${index + 1}: $${sidePot.amount.toString().padEnd(43 - sidePot.amount.toString().length)}│`);
+      console.log(line(`边池 ${index + 1}: $${sidePot.amount}`));
     });
   }
 
-  console.log(`  │  当前下注: $${gameState.currentBet.toString().padEnd(42 - gameState.currentBet.toString().length)}│`);
-  console.log('  └────────────────────────────────────────────────────────────┘');
+  console.log(line(`当前下注: $${gameState.currentBet}`));
+  console.log(`  └${'─'.repeat(BOX_W + 2)}┘`);
   console.log();
 }
 
@@ -163,9 +171,12 @@ function renderPlayer(
  * @param actions - 可用动作数组
  */
 function renderAvailableActions(actions: PlayerAction[]): void {
-  console.log('  ┌────────────────────────────────────────────────────────────┐');
-  console.log('  │  轮到你的回合！                                            │');
-  console.log('  ├────────────────────────────────────────────────────────────┤');
+  const BOX_W = 58;
+  const ACTIONS_INNER = BOX_W;
+
+  console.log(`  ┌${'─'.repeat(BOX_W + 2)}┐`);
+  console.log(`  │  ${padVisual('轮到你的回合！', ACTIONS_INNER)}│`);
+  console.log(`  ├${'─'.repeat(BOX_W + 2)}┤`);
 
   const actionMap: Record<PlayerAction, string> = {
     [PlayerAction.Fold]: '弃牌',
@@ -177,10 +188,10 @@ function renderAvailableActions(actions: PlayerAction[]): void {
 
   actions.forEach((action, index) => {
     const displayText = actionMap[action];
-    console.log(`  │  ${index + 1}. ${displayText.padEnd(50)}│`);
+    console.log(`  │  ${padVisual(`${index + 1}. ${displayText}`, ACTIONS_INNER)}│`);
   });
 
-  console.log('  └────────────────────────────────────────────────────────────┘');
+  console.log(`  └${'─'.repeat(BOX_W + 2)}┘`);
 }
 
 /**
@@ -195,9 +206,7 @@ export function renderRemoteHandResult(
   handDescriptions: Map<number, string>
 ): void {
   console.log();
-  console.log('  ╔══════════════════════════════════════════════════════════════╗');
-  console.log('  ║                          手牌结果                             ║');
-  console.log('  ╚══════════════════════════════════════════════════════════════╝');
+  subBoxTitle('手牌结果');
   console.log();
 
   for (const player of gameState.players) {
@@ -254,9 +263,7 @@ export function renderRemoteAction(playerName: string, action: string, amount?: 
  */
 export function renderRemoteGameOver(gameState: SerializedGameState): void {
   console.log();
-  console.log('  ╔══════════════════════════════════════════════════════════════╗');
-  console.log('  ║                          游戏结束                             ║');
-  console.log('  ╚══════════════════════════════════════════════════════════════╝');
+  subBoxTitle('游戏结束');
   console.log();
 
   const sortedPlayers = [...gameState.players].sort((a, b) => b.chips - a.chips);
@@ -295,6 +302,14 @@ export function renderConnectionStatus(status: string): void {
  */
 export function renderError(error: string): void {
   console.log(`  [错误] ${error}`);
+}
+
+function subBoxTitle(title: string): void {
+  const BOX_W = 60;
+  const INNER = BOX_W - 2;
+  console.log(`  ╔${'═'.repeat(BOX_W)}╗`);
+  console.log(`  ║ ${centerVisual(title, INNER)} ║`);
+  console.log(`  ╚${'═'.repeat(BOX_W)}╝`);
 }
 
 /**

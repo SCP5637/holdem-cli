@@ -6,6 +6,7 @@
 import { GameState, Player, GamePhase } from '../types/game';
 import { renderCards } from './cardRenderer';
 import { GOLD_COLOR, RED_COLOR, RESET_COLOR } from '../types/card';
+import { padVisual, centerVisual } from './terminal';
 
 /**
  * 清空控制台屏幕
@@ -96,9 +97,11 @@ export function renderGameState(state: GameState, showAllCards: boolean = false)
  */
 function renderHeader(state: GameState): void {
   const phase = getPhaseDisplay(state.currentPhase);
-  console.log('╔══════════════════════════════════════════════════════════════╗');
-  console.log(`║                     德州扑克 - ${phase}                      ║`);
-  console.log('╚══════════════════════════════════════════════════════════════╝');
+  const BOX_W = 60;
+  const title = centerVisual(`德州扑克 - ${phase}`, BOX_W);
+  console.log('╔' + '═'.repeat(BOX_W) + '╗');
+  console.log('║' + title + '║');
+  console.log('╚' + '═'.repeat(BOX_W) + '╝');
   console.log();
 }
 
@@ -129,19 +132,24 @@ function renderCommunityCards(state: GameState): void {
  */
 function renderPot(state: GameState): void {
   const totalPot = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+  const BOX_W = 58; // content width between left & right border
 
-  console.log('  ┌────────────────────────────────────────────────────────────┐');
-  console.log(`  │  总底池: ${GOLD_COLOR}$${totalPot.toString()}${RESET_COLOR}${''.padEnd(43 - totalPot.toString().length)}│`);
+  function line(content: string): string {
+    return `  │  ${padVisual(content, BOX_W)}│`;
+  }
+
+  console.log(`  ┌${'─'.repeat(BOX_W + 2)}┐`);
+  console.log(line(`总底池: ${GOLD_COLOR}$${totalPot}${RESET_COLOR}`));
 
   if (state.sidePots.length > 0) {
-    console.log(`  │  主底池: ${GOLD_COLOR}$${state.pot.toString()}${RESET_COLOR}${''.padEnd(43 - state.pot.toString().length)}│`);
+    console.log(line(`主底池: ${GOLD_COLOR}$${state.pot}${RESET_COLOR}`));
     state.sidePots.forEach((sidePot, index) => {
-      console.log(`  │  边池 ${index + 1}: ${GOLD_COLOR}$${sidePot.amount.toString()}${RESET_COLOR}${''.padEnd(41 - sidePot.amount.toString().length)}│`);
+      console.log(line(`边池 ${index + 1}: ${GOLD_COLOR}$${sidePot.amount}${RESET_COLOR}`));
     });
   }
 
-  console.log(`  │  当前下注: ${GOLD_COLOR}$${state.currentBet.toString()}${RESET_COLOR}${''.padEnd(40 - state.currentBet.toString().length)}│`);
-  console.log('  └────────────────────────────────────────────────────────────┘');
+  console.log(line(`当前下注: ${GOLD_COLOR}$${state.currentBet}${RESET_COLOR}`));
+  console.log(`  └${'─'.repeat(BOX_W + 2)}┘`);
   console.log();
 }
 
@@ -220,9 +228,7 @@ export function renderHandResult(
   handDescriptions: Map<number, string>
 ): void {
   console.log();
-  console.log('  ╔══════════════════════════════════════════════════════════════╗');
-  console.log('  ║                          手牌结果                             ║');
-  console.log('  ╚══════════════════════════════════════════════════════════════╝');
+  subBoxTitle('手牌结果');
   console.log();
 
   for (const player of state.players) {
@@ -279,9 +285,7 @@ export function renderAction(playerName: string, action: string, amount?: number
  */
 export function renderGameOver(state: GameState): void {
   console.log();
-  console.log('  ╔══════════════════════════════════════════════════════════════╗');
-  console.log('  ║                          游戏结束                             ║');
-  console.log('  ╚══════════════════════════════════════════════════════════════╝');
+  subBoxTitle('游戏结束');
   console.log();
 
   const sortedPlayers = [...state.players].sort((a, b) => b.chips - a.chips);
@@ -296,6 +300,17 @@ export function renderGameOver(state: GameState): void {
   }
 
   console.log();
+}
+
+/**
+ * Render a centered title box with 2-space margin (for hand result, game over, etc.)
+ */
+function subBoxTitle(title: string): void {
+  const BOX_W = 60;
+  const INNER = BOX_W - 2;
+  console.log(`  ╔${'═'.repeat(BOX_W)}╗`);
+  console.log(`  ║ ${centerVisual(title, INNER)} ║`);
+  console.log(`  ╚${'═'.repeat(BOX_W)}╝`);
 }
 
 /**
