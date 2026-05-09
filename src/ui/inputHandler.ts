@@ -637,19 +637,107 @@ async function tuiConfigureOpponents(
   return { llmAssignments, aiDifficulties };
 }
 
-async function tuiSelectDifficulty(): Promise<AIDifficulty | null> {
-  const options = [
-    { label: 'Low (初级)', desc: '被动保守，易击败' },
-    { label: 'Medium (中级)', desc: '基础扎实，偶有诈唬' },
-    { label: 'High (高级)', desc: '数学正确，权益驱动' },
-    { label: 'Ultra (超级)', desc: 'GTO平衡，对手建模' },
-    { label: 'Max (极限)', desc: '全技术融合，最强挑战' },
-  ];
+/** 逐字着色: 返回单个字符的ANSI颜色码 */
+function getCharColor(diffIdx: number, charIdx: number, frame: number): string {
+  switch (diffIdx) {
+    case 0: return '\x1b[32m';  // Low — 绿色
+    case 1: return '\x1b[33m';  // Medium — 黄色
+    case 2: return '\x1b[31m';  // High — 红色
+    case 3: { // Ultra — 红色底, 亮粉逐字波浪
+      const len = 5;
+      const wave = frame % len;
+      return charIdx === wave ? '\x1b[38;5;201m' : '\x1b[31m';
+    }
+    case 4: { // Max — 逐字彩虹流动
+      const rainbow = ['\x1b[31m', '\x1b[33m', '\x1b[32m', '\x1b[36m', '\x1b[34m', '\x1b[35m'];
+      return rainbow[(charIdx + frame) % rainbow.length];
+    }
+    default: return '\x1b[37m';
+  }
+}
 
-  const idx = await tuiDescribedSelect('AI 难度', options, 1);
-  if (idx === null) return null;
+/** 构建带逐字颜色的标签: "Low (初级)" → 英文有色 + 中文淡灰 */
+function colorizeLabel(eng: string, chn: string, diffIdx: number, frame: number): string {
+  const R = '\x1b[0m';
+  const DIM = '\x1b[2m';
+  let out = '';
+  for (let i = 0; i < eng.length; i++) {
+    out += getCharColor(diffIdx, i, frame) + eng[i];
+  }
+  out += R + ' ' + DIM + chn + R;
+  return out;
+}
+
+async function tuiSelectDifficulty(): Promise<AIDifficulty | null> {
+  const ctx = getMenuContext()!;
+  const { screen, input, theme } = ctx;
+  const engNames = ['Zhua', 'Medium', 'High', 'Ultra', 'Max'];
+  const chnNames = ['(初级)', '(中级)', '(高级)', '(超级)', '(极限)'];
+  const descs = [
+    'zhua',
+    '基础模型',
+    '数学正确模型，初具人形',
+    '接近纳什均衡',
+    '快跑，不是对手',
+  ];
+  let selected = 1; // default Medium
+  let frame = 0;
+  let animTimer: ReturnType<typeof setInterval> | null = null;
+
+  const render = () => {
+    const size = getTerminalSize();
+    const coloredOptions = engNames.map((eng, i) => ({
+      label: colorizeLabel(eng, chnNames[i], i, frame),
+      desc: descs[i],
+    }));
+
+    const lines: string[] = [];
+    lines.push('');
+    lines.push(...renderTitle('AI 难度', theme, size.width));
+    lines.push(...renderDescribedList(coloredOptions, selected, theme, size.width));
+    lines.push('');
+    lines.push(renderStatusBar('↑↓ 导航  数字键  Enter 确认  Esc 返回', theme, size.width));
+    for (let i = 0; i < lines.length; i++) {
+      screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      screen.setLine(i, '');
+    }
+    screen.render();
+  };
+
+  animTimer = setInterval(() => {
+    frame++;
+    render();
+  }, 300);
+
+  ctx.setRender(render);
+  render();
+
+  let result: number | null = null;
+  try {
+    while (true) {
+      const evt = await input.waitForSelection(engNames.length);
+      if (evt.type === 'arrow') {
+        selected = (selected + evt.value + engNames.length) % engNames.length;
+        render();
+      } else if (evt.type === 'number') {
+        const idx = evt.value - 1;
+        if (idx >= 0 && idx < engNames.length) { result = idx; break; }
+      } else if (evt.type === 'enter') {
+        result = selected; break;
+      } else if (evt.type === 'escape') {
+        result = null; break;
+      }
+    }
+  } finally {
+    if (animTimer) clearInterval(animTimer);
+    ctx.setRender(null);
+  }
+
+  if (result === null) return null;
   const difficulties = [AIDifficulty.Low, AIDifficulty.Medium, AIDifficulty.High, AIDifficulty.Ultra, AIDifficulty.Max];
-  return difficulties[idx];
+  return difficulties[result];
 }
 
 async function tuiConfigureSeat(seatIndex: number, presets: LLMPreset[]): Promise<SeatConfig | null> {
