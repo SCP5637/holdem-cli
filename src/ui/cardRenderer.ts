@@ -97,3 +97,64 @@ export function renderCardSimple(card: Card): string {
 export function renderCardsSimple(cards: Card[]): string {
   return cards.map(renderCardSimple).join(' ');
 }
+
+/**
+ * 紧凑2行卡牌渲染（中等宽度布局用）
+ */
+export function renderCardCompact(card: Card, hidden: boolean = false): string[] {
+  if (hidden) {
+    return [
+      '┌───┐',
+      '│ ? │',
+      '└───┘'
+    ];
+  }
+
+  const suit = SUIT_SYMBOLS[card.suit];
+  const rank = getRankDisplay(card.rank);
+  const color = SUIT_COLORS[card.suit];
+  const reset = RESET_COLOR;
+
+  return [
+    `${color}┌───┐${reset}`,
+    `${color}│${rank.padEnd(2)}${suit}│${reset}`,
+    `${color}└───┘${reset}`
+  ];
+}
+
+/**
+ * 并排紧凑渲染多张卡牌
+ */
+export function renderCardsCompact(cards: Card[], hiddenIndices: number[] = []): string {
+  if (cards.length === 0) return '';
+
+  const cardLines: string[][] = cards.map((card, index) =>
+    renderCardCompact(card, hiddenIndices.includes(index))
+  );
+
+  const lines: string[] = [];
+  const rows = cardLines[0].length;
+  for (let i = 0; i < rows; i++) {
+    lines.push(cardLines.map(card => card[i]).join(' '));
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * 单行标签卡牌（窄布局用）
+ */
+export function renderCardLabel(card: Card, hidden: boolean = false): string {
+  if (hidden) return '[?]';
+  const suit = SUIT_SYMBOLS[card.suit];
+  const color = SUIT_COLORS[card.suit];
+  const reset = RESET_COLOR;
+  return `${color}[${card.rank}${suit}]${reset}`;
+}
+
+/**
+ * 并排标签渲染多张卡牌
+ */
+export function renderCardsLabels(cards: Card[], hiddenIndices: number[] = []): string {
+  return cards.map((card, idx) => renderCardLabel(card, hiddenIndices.includes(idx))).join(' ');
+}

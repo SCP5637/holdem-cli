@@ -11,32 +11,14 @@ import { getLLMAction } from './core/llmPlayer';
 import { evaluateHand } from './core/handEvaluator';
 import {
   getGameConfig,
-  getPlayerAction,
   waitForEnter,
   selectRunMode,
   configureHost,
   configureClient,
   selectSeatAndName
 } from './ui/inputHandler';
-import {
-  renderGameState,
-  renderHandResult,
-  renderAction,
-  renderGameOver,
-  clearScreen,
-  startWaitingAnimation,
-  showPhaseTransitionAnimation
-} from './ui/gameRenderer';
+import { GameUI } from './ui/gameUI';
 import { centerVisual } from './ui/terminal';
-import {
-  renderRemoteGameState,
-  renderRemoteHandResult,
-  renderRemoteAction,
-  renderRemoteGameOver,
-  renderWaiting,
-  renderConnectionStatus,
-  renderError
-} from './ui/remoteRenderer';
 import { loadLLMPresets } from './core/llmPresetStore';
 import { LLMPreset } from './types/llm';
 import { logger } from './core/logger';
@@ -51,6 +33,7 @@ const BIG_BLIND = 20;
 const MIN_PLAYERS = 2;
 
 // 全局变量用于联机模式
+let gameUI: GameUI | null = null;
 let gameServer: GameServer | null = null;
 let gameClient: GameClient | null = null;
 let isHostMode = false;
@@ -87,6 +70,10 @@ async function main(): Promise<void> {
         break;
     }
   } finally {
+    if (gameUI) {
+      gameUI.destroy();
+      gameUI = null;
+    }
     if (gameServer) {
       await gameServer.stop();
     }
@@ -123,19 +110,28 @@ async function runLocalGame(): Promise<void> {
   let state = createGame(config);
   logger.info('GAME', '游戏创建成功', { players: state.players.map(p => ({ name: p.name, isHuman: p.isHuman, llmPreset: p.llmPresetName })) });
 
-  while (getActivePlayerCount(state) >= MIN_PLAYERS) {
-    await playHand(state, llmPresetMap);
+  // 初始化GameUI
+  gameUI = new GameUI();
+  gameUI.init();
 
-    if (getActivePlayerCount(state) < MIN_PLAYERS) {
-      break;
+  try {
+    while (getActivePlayerCount(state) >= MIN_PLAYERS) {
+      await playHand(state, llmPresetMap);
+
+      if (getActivePlayerCount(state) < MIN_PLAYERS) {
+        break;
+      }
+
+      await gameUI.waitForEnter('\n按 Enter 键开始下一手牌...');
+      prepareNewHand(state);
     }
 
-    await waitForEnter('\n按 Enter 键开始下一手牌...');
-    prepareNewHand(state);
+    gameUI.renderGameOver(state);
+    logger.info('GAME', '游戏结束');
+  } finally {
+    gameUI.destroy();
+    gameUI = null;
   }
-
-  renderGameOver(state);
-  logger.info('GAME', '游戏结束');
 }
 
 /**
@@ -275,31 +271,36 @@ async function runHostGame(): Promise<void> {
   // 广播初始状态
   gameServer.broadcastGameState(state);
 
-  while (getActivePlayerCount(state) >= MIN_PLAYERS) {
-    await playHandHost(state, llmPresetMap, hostConfig);
+  // 初始化GameUI
+  gameUI = new GameUI();
+  gameUI.init();
 
-    if (getActivePlayerCount(state) < MIN_PLAYERS) {
-      break;
+  try {
+    while (getActivePlayerCount(state) >= MIN_PLAYERS) {
+      await playHandHost(state, llmPresetMap, hostConfig);
+
+      if (getActivePlayerCount(state) < MIN_PLAYERS) {
+        break;
+      }
+
+      const shouldEnd = await gameUI.waitForEnterOrZero('按 Enter 继续，或按 0 结束游戏');
+      if (shouldEnd) {
+        gameUI.showMessage('结束游戏');
+        break;
+      }
+
+      prepareNewHand(state);
+
+      // 广播新游戏状态
+      gameServer.broadcastGameState(state);
     }
 
-    console.log('\n  按 Enter 键开始下一手牌...');
-    console.log('  (或输入 0 结束游戏)');
-
-    // 等待 Enter 或 0
-    const input = await getInput('');
-    if (input.trim() === '0') {
-      console.log('  结束游戏');
-      break;
-    }
-
-    prepareNewHand(state);
-
-    // 广播新游戏状态
+    gameUI.renderGameOver(state);
     gameServer.broadcastGameState(state);
+  } finally {
+    gameUI.destroy();
+    gameUI = null;
   }
-
-  renderGameOver(state);
-  gameServer.broadcastGameState(state);
 }
 
 /**
@@ -320,11 +321,19 @@ async function runClientGame(): Promise<void> {
 
   // 设置事件监听
   gameClient.on('connected', () => {
-    renderConnectionStatus('已连接到服务器');
+    if (gameUI) {
+      gameUI.showMessage('已连接到服务器');
+    } else {
+      console.log('  [连接] 已连接到服务器');
+    }
   });
 
   gameClient.on('disconnected', (reason) => {
-    renderConnectionStatus(`已断开: ${reason}`);
+    if (gameUI) {
+      gameUI.showMessage(`已断开: ${reason}`);
+    } else {
+      console.log(`  [连接] 已断开: ${reason}`);
+    }
     process.exit(0);
   });
 
@@ -332,23 +341,29 @@ async function runClientGame(): Promise<void> {
     currentGameState = gameState;
     mySeatIndex = seatIndex;
 
-    // 检查是否轮到自己
-    const isMyTurn = gameState.currentPlayerIndex === seatIndex;
-    const myPlayer = gameState.players.find(p => p.id === seatIndex);
+    if (gameUI) {
+      gameUI.setMySeat(seatIndex);
 
-    if (isMyTurn && myPlayer?.isActive && !myPlayer?.isAllIn && !waitingForAction) {
-      waitingForAction = true;
-      // 获取可用动作并显示
-      const availableActions = getAvailableActionsFromState(gameState, seatIndex);
-      renderRemoteGameState(gameState, seatIndex, availableActions);
-    } else {
-      renderRemoteGameState(gameState, seatIndex);
+      // 检查是否轮到自己
+      const isMyTurn = gameState.currentPlayerIndex === seatIndex;
+      const myPlayer = gameState.players.find(p => p.id === seatIndex);
+
+      if (isMyTurn && myPlayer?.isActive && !myPlayer?.isAllIn && !waitingForAction) {
+        waitingForAction = true;
+        gameUI.renderGame(gameState);
+      } else {
+        gameUI.renderGame(gameState);
+      }
     }
   });
 
   gameClient.on('action-result', (success, message) => {
     if (!success && message) {
-      renderError(message);
+      if (gameUI) {
+        gameUI.showMessage(message);
+      } else {
+        console.log(`  [错误] ${message}`);
+      }
     }
     waitingForAction = false;
   });
@@ -443,24 +458,37 @@ async function runClientGame(): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 
-  // 游戏循环：等待服务器状态更新并响应
+  // 游戏循环：初始化GameUI
+  gameUI = new GameUI();
+  if (mySeatIndex >= 0) gameUI.setMySeat(mySeatIndex);
+  gameUI.init();
   console.log('\n  游戏开始！');
 
-  // 保持进程运行
-  while (gameClient.getIsConnected()) {
-    if (waitingForAction && currentGameState) {
-      // 获取玩家输入
-      const availableActions = getAvailableActionsFromState(currentGameState, mySeatIndex);
-      if (availableActions.length > 0) {
-        try {
-          const action = await getPlayerAction(availableActions);
-          gameClient.sendAction(action.action, action.amount);
-        } catch {
-          // 输入错误，继续等待
+  try {
+    // 首次渲染
+    if (currentGameState) {
+      gameUI.renderGame(currentGameState);
+    }
+
+    // 保持进程运行
+    while (gameClient.getIsConnected()) {
+      if (waitingForAction && currentGameState) {
+        // 获取玩家输入
+        const availableActions = getAvailableActionsFromState(currentGameState, mySeatIndex);
+        if (availableActions.length > 0) {
+          try {
+            const action = await gameUI.waitForAction(availableActions);
+            gameClient.sendAction(action.action, action.amount);
+          } catch {
+            // 输入错误，继续等待
+          }
         }
       }
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
-    await new Promise(resolve => setTimeout(resolve, 100));
+  } finally {
+    gameUI.destroy();
+    gameUI = null;
   }
 }
 
@@ -511,7 +539,7 @@ async function getNumberInputWithTimeout(
  */
 async function playHandHost(state: GameState, llmPresetMap: Map<string, LLMPreset>, hostConfig: HostConfig): Promise<void> {
   logger.info('GAME', '开始新的一手牌', { hand: state.handNumber, dealer: state.dealerIndex });
-  renderGameState(state);
+  gameUI!.renderGame(state);
   gameServer!.broadcastGameState(state);
 
   while (!isHandOver(state)) {
@@ -523,11 +551,11 @@ async function playHandHost(state: GameState, llmPresetMap: Map<string, LLMPrese
 
     if (isBettingRoundComplete(state)) {
       const prevPhase = state.currentPhase;
-      await showPhaseTransitionAnimation(5000);
-      clearScreen();
+      const nextPhase = getNextPhase(prevPhase);
+      await gameUI!.showPhaseTransition(5000, prevPhase, nextPhase);
       advancePhase(state);
       logger.logPhaseChange(prevPhase, state.currentPhase);
-      renderGameState(state);
+      gameUI!.renderGame(state);
       gameServer!.broadcastGameState(state);
     }
   }
@@ -551,7 +579,7 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
     const player = getCurrentPlayer(state);
 
     if (player.isActive && !player.isAllIn) {
-      renderGameState(state);
+      gameUI!.renderGame(state);
       gameServer!.broadcastGameState(state);
 
       // 检查是否是远程玩家
@@ -562,7 +590,7 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
 
       if (isRemotePlayer) {
         // 等待远程玩家动作
-        renderWaiting(`等待 ${player.name} 行动`);
+        gameUI!.showMessage(`等待 ${player.name} 行动`);
         gameServer!.waitForPlayerAction(player.id);
 
         const action = await waitForRemoteAction();
@@ -575,13 +603,13 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
 
           if (success) {
             recordPlayerAction(player.id, action.action, toCall, potBefore);
-            renderAction(player.name, action.action, action.amount);
+            gameUI!.showAction(player.name, action.action, action.amount);
             logger.logGameAction(player.name, action.action, action.amount);
           }
         }
       } else if (player.isHuman) {
         // 主机玩家
-        const action = await getPlayerAction(getAvailableActions(state));
+        const action = await gameUI!.waitForAction(getAvailableActions(state));
 
         if (action) {
           const toCall = state.currentBet - player.currentBet;
@@ -590,7 +618,7 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
 
           if (success) {
             recordPlayerAction(player.id, action.action, toCall, potBefore);
-            renderAction(player.name, action.action, action.amount);
+            gameUI!.showAction(player.name, action.action, action.amount);
             logger.logGameAction(player.name, action.action, action.amount);
           }
         }
@@ -599,7 +627,7 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
         const thinkingMessage = player.llmPresetName
           ? `[LLM] ${player.name} 正在思考`
           : `${player.name} 正在思考`;
-        stopAnimation = startWaitingAnimation(thinkingMessage);
+        stopAnimation = gameUI!.startSpinner(thinkingMessage);
 
         const action = await getAction(state, player, llmPresetMap);
 
@@ -614,7 +642,7 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
 
           if (success) {
             recordPlayerAction(player.id, action.action, toCall, potBefore);
-            renderAction(player.name, action.action, action.amount);
+            gameUI!.showAction(player.name, action.action, action.amount);
             logger.logGameAction(player.name, action.action, action.amount);
           }
         }
@@ -665,13 +693,13 @@ async function resolveHandHost(state: GameState): Promise<void> {
     }
   }
 
-  renderGameState(state, true);
-  renderHandResult(state, winners, handDescriptions);
+  gameUI!.renderGame(state, true);
+  gameUI!.renderHandResult(winners, handDescriptions, state);
   gameServer!.broadcastGameState(state);
 
   awardPot(state, winners);
 
-  await waitForEnter();
+  await gameUI!.waitForEnter();
 }
 
 /**
@@ -708,7 +736,7 @@ function getAvailableActionsFromState(gameState: SerializedGameState, mySeatInde
 // 原本地游戏函数保持不变
 async function playHand(state: GameState, llmPresetMap: Map<string, LLMPreset>): Promise<void> {
   logger.info('GAME', '开始新的一手牌', { hand: state.handNumber, dealer: state.dealerIndex });
-  renderGameState(state);
+  gameUI!.renderGame(state);
 
   while (!isHandOver(state)) {
     await playBettingRound(state, llmPresetMap);
@@ -719,11 +747,11 @@ async function playHand(state: GameState, llmPresetMap: Map<string, LLMPreset>):
 
     if (isBettingRoundComplete(state)) {
       const prevPhase = state.currentPhase;
-      await showPhaseTransitionAnimation(5000);
-      clearScreen();
+      const nextPhase = getNextPhase(prevPhase);
+      await gameUI!.showPhaseTransition(5000, prevPhase, nextPhase);
       advancePhase(state);
       logger.logPhaseChange(prevPhase, state.currentPhase);
-      renderGameState(state);
+      gameUI!.renderGame(state);
     }
   }
 
@@ -743,14 +771,14 @@ async function playBettingRound(state: GameState, llmPresetMap: Map<string, LLMP
     const player = getCurrentPlayer(state);
 
     if (player.isActive && !player.isAllIn) {
-      renderGameState(state);
+      gameUI!.renderGame(state);
 
       let stopAnimation: (() => void) | null = null;
       if (!player.isHuman) {
         const thinkingMessage = player.llmPresetName
           ? `[LLM] ${player.name} 正在思考`
           : `${player.name} 正在思考`;
-        stopAnimation = startWaitingAnimation(thinkingMessage);
+        stopAnimation = gameUI!.startSpinner(thinkingMessage);
       }
 
       const action = await getAction(state, player, llmPresetMap);
@@ -766,7 +794,7 @@ async function playBettingRound(state: GameState, llmPresetMap: Map<string, LLMP
 
         if (success) {
           recordPlayerAction(player.id, action.action, toCall, potBefore);
-          renderAction(player.name, action.action, action.amount);
+          gameUI!.showAction(player.name, action.action, action.amount);
           logger.logGameAction(player.name, action.action, action.amount);
         }
       }
@@ -788,7 +816,7 @@ async function getAction(state: GameState, player: Player, llmPresetMap: Map<str
   }
 
   if (player.isHuman) {
-    return await getPlayerAction(availableActions);
+    return await gameUI!.waitForAction(availableActions);
   }
 
   if (player.llmPresetName) {
@@ -817,12 +845,12 @@ async function resolveHand(state: GameState): Promise<void> {
     }
   }
 
-  renderGameState(state, true);
-  renderHandResult(state, winners, handDescriptions);
+  gameUI!.renderGame(state, true);
+  gameUI!.renderHandResult(winners, handDescriptions, state);
 
   awardPot(state, winners);
 
-  await waitForEnter();
+  await gameUI!.waitForEnter();
 }
 
 function getActivePlayerCount(state: GameState): number {
@@ -835,6 +863,12 @@ function formatHoleCards(cards: Card[]): string {
   }
 
   return `${formatCard(cards[0])} ${formatCard(cards[1])}`;
+}
+
+function getNextPhase(current: string): string {
+  const order = ['preflop', 'flop', 'turn', 'river', 'showdown'];
+  const idx = order.indexOf(current);
+  return idx >= 0 && idx < order.length - 1 ? order[idx + 1] : '';
 }
 
 function formatCard(card: Card): string {

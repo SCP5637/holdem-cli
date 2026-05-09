@@ -89,10 +89,9 @@ class Logger {
 
     const logLine = this.formatLogEntry(entry);
 
-    // 控制台输出（仅 ERROR 和 WARN 默认输出到控制台，DEBUG 模式下全部输出）
+    // 控制台输出写入stderr，避免污染交替屏幕缓冲区(stdout)
     if (this.isDebugMode || level === 'ERROR' || level === 'WARN') {
-      const consoleMethod = level === 'ERROR' ? console.error : level === 'WARN' ? console.warn : console.log;
-      consoleMethod(`[${level}] [${category}] ${message}`);
+      process.stderr.write(`[${level}] [${category}] ${message}\n`);
     }
 
     // 写入日志缓冲区

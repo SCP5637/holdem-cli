@@ -50,3 +50,16 @@ export function centerVisual(str: string, targetWidth: number): string {
   const rightPad = targetWidth - current - leftPad;
   return ' '.repeat(leftPad) + str + ' '.repeat(rightPad);
 }
+
+/** 获取当前终端尺寸 */
+export function getTerminalSize(): { width: number; height: number } {
+  return {
+    width: process.stdout.columns || 80,
+    height: process.stdout.rows || 24
+  };
+}
+
+/** 检查是否为TTY(可交互终端) */
+export function isTTY(): boolean {
+  return process.stdout.isTTY === true && process.stdin.isTTY === true;
+}

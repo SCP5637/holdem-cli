@@ -4,7 +4,7 @@
  */
 
 import * as readline from 'readline';
-import { PlayerAction, AIDifficulty } from '../types/game';
+import { AIDifficulty } from '../types/game';
 import { LLMAssignment, LLMPreset } from '../types/llm';
 import { loadLLMPresets, upsertLLMPreset, deleteLLMPreset } from '../core/llmPresetStore';
 import { RunMode, SeatConfig, SeatType, HostConfig, ClientConfig } from '../types/network';
@@ -62,54 +62,6 @@ export async function getNumberInput(question: string, min: number, max: number,
 
     console.log(`输入无效。请输入 ${min} 到 ${max} 之间的数字。`);
   }
-}
-
-/**
- * 提示用户从可用动作中选择
- * @param actions - 可用动作数组
- * @returns 解析为所选动作和可选金额的 Promise
- */
-export async function getPlayerAction(
-  actions: PlayerAction[]
-): Promise<{ action: PlayerAction; amount?: number }> {
-  console.log('\n可选动作:');
-
-  const actionMap: Map<number, PlayerAction> = new Map();
-  let optionNumber = 1;
-
-  for (const action of actions) {
-    const displayText = getActionDisplayText(action);
-    console.log(`  ${optionNumber}. ${displayText}`);
-    actionMap.set(optionNumber, action);
-    optionNumber++;
-  }
-
-  const choice = await getNumberInput('选择动作: ', 1, actions.length);
-  const selectedAction = actionMap.get(choice)!;
-
-  if (selectedAction === PlayerAction.Raise) {
-    const amount = await getNumberInput('输入加注金额: ', 1, Number.MAX_SAFE_INTEGER);
-    return { action: selectedAction, amount };
-  }
-
-  return { action: selectedAction };
-}
-
-/**
- * 获取动作的中文显示文本
- * @param action - 玩家动作
- * @returns 中文动作描述
- */
-function getActionDisplayText(action: PlayerAction): string {
-  const displayMap: Record<PlayerAction, string> = {
-    [PlayerAction.Fold]: '弃牌',
-    [PlayerAction.Check]: '过牌',
-    [PlayerAction.Call]: '跟注',
-    [PlayerAction.Raise]: '加注',
-    [PlayerAction.AllIn]: '全押'
-  };
-
-  return displayMap[action];
 }
 
 /**
