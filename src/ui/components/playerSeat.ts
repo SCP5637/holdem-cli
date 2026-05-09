@@ -70,7 +70,7 @@ function renderFull(data: PlayerSeatData, theme: Theme, width: number): string[]
   const infoLine = `${chipsStr}  ${betStr}`;
   lines.push(themed(BOX_V, b) + padVisual(infoLine, innerW) + themed(BOX_V, b));
 
-  // 第3-7行: 手牌(如适用)
+  // 第3-7行: 手牌 / 牌背 / 弃牌(保持5行高度)
   if (data.hand.length > 0 && data.showCards) {
     const cards = data.hand.map(toCardType);
     const cardRender = renderCards(cards);
@@ -78,7 +78,12 @@ function renderFull(data: PlayerSeatData, theme: Theme, width: number): string[]
       lines.push(themed(BOX_V, b) + padVisual(line, innerW) + themed(BOX_V, b));
     }
   } else if (!data.isActive) {
-    lines.push(themed(BOX_V, b) + padVisual(themed('  (已弃牌)', theme.dim), innerW) + themed(BOX_V, b));
+    const foldLabel = themed('FOLD', theme.dim);
+    const leftPad = Math.floor((innerW - 4) / 2);
+    const foldLine = ' '.repeat(leftPad) + foldLabel;
+    for (let j = 0; j < 5; j++) {
+      lines.push(themed(BOX_V, b) + padAnsi(j === 2 ? foldLine : '', innerW) + themed(BOX_V, b));
+    }
   } else if (data.hand.length > 0 && !data.showCards) {
     // 对手牌背：用5行隐藏卡牌匹配人类玩家牌面高度
     const backColor = data.isAllIn ? theme.dim : theme.cardBack;
@@ -113,7 +118,7 @@ function renderCompact(data: PlayerSeatData, theme: Theme, width: number): strin
   const betStr = data.currentBet > 0 ? ' ' + themed('注:', theme.dim) + ' ' + chipText(data.currentBet) : '';
   lines.push(themed(BOX_V, b) + padVisual(chipsStr + betStr, innerW) + themed(BOX_V, b));
 
-  // 3行紧凑牌(中间密度)
+  // 3行紧凑牌 / 弃牌(保持3行高度)
   if (data.hand.length > 0 && data.showCards) {
     const cards = data.hand.map(toCardType);
     const cardRender = renderCardsCompact(cards);
@@ -121,7 +126,12 @@ function renderCompact(data: PlayerSeatData, theme: Theme, width: number): strin
       lines.push(themed(BOX_V, b) + padVisual(line, innerW) + themed(BOX_V, b));
     }
   } else if (!data.isActive) {
-    lines.push(themed(BOX_V, b) + padVisual(themed('(已弃牌)', theme.dim), innerW) + themed(BOX_V, b));
+    const foldLabel = themed('FOLD', theme.dim);
+    const leftPad = Math.floor((innerW - 4) / 2);
+    const foldLine = ' '.repeat(leftPad) + foldLabel;
+    lines.push(themed(BOX_V, b) + padAnsi('', innerW) + themed(BOX_V, b));
+    lines.push(themed(BOX_V, b) + padAnsi(foldLine, innerW) + themed(BOX_V, b));
+    lines.push(themed(BOX_V, b) + padAnsi('', innerW) + themed(BOX_V, b));
   } else if (data.hand.length > 0 && !data.showCards) {
     const backColor = data.isAllIn ? theme.dim : theme.cardBack;
     lines.push(themed(BOX_V, b) + padVisual(themed('┌───┐ ┌───┐', backColor), innerW) + themed(BOX_V, b));
@@ -148,8 +158,12 @@ function renderSlim(data: PlayerSeatData, theme: Theme, width: number): string[]
   const styled = data.isActive ? lineText : themed(lineText, theme.dim);
   lines.push(themed(BOX_V, b) + padVisual(styled, innerW) + themed(BOX_V, b));
 
-  // 简牌
-  if (data.hand.length > 0 && data.showCards) {
+  // 简牌 / 弃牌
+  if (!data.isActive) {
+    const foldLabel = themed('FOLD', theme.dim);
+    const leftPad = Math.floor((innerW - 4) / 2);
+    lines.push(themed(BOX_V, b) + padAnsi(' '.repeat(leftPad) + foldLabel, innerW) + themed(BOX_V, b));
+  } else if (data.hand.length > 0 && data.showCards) {
     const simple = renderCardsSimple(data.hand.map(toCardType));
     lines.push(themed(BOX_V, b) + padVisual(simple, innerW) + themed(BOX_V, b));
   } else if (data.hand.length > 0 && !data.showCards) {

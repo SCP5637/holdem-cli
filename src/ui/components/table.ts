@@ -122,14 +122,12 @@ function renderPlayerRow(
   const rendered = players.map(p => renderPlayerSeat(p, theme, perWidth, density));
   const maxLines = Math.max(...rendered.map(r => r.length));
 
-  // 水平拼接
+  // 水平拼接：每玩家占perWidth宽列，join保持列对齐
   const result: string[] = [];
   for (let i = 0; i < maxLines; i++) {
-    let line = '';
-    for (const r of rendered) {
-      line += (r[i] || ' '.repeat(perWidth)) + ' ';
-    }
-    result.push(centerAnsi(line.trimEnd(), totalWidth));
+    const parts = rendered.map(r => r[i] || ' '.repeat(perWidth));
+    const line = parts.join(' ');
+    result.push(centerAnsi(line, totalWidth));
   }
 
   return result;
