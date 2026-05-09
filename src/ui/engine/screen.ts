@@ -11,6 +11,7 @@ export class Screen {
   private altActive = false;
   private resizeCbs: Array<() => void> = [];
   private resizeListener: (() => void) | null = null;
+  private forceFullRender = false;
   public width: number;
   public height: number;
 
@@ -85,8 +86,19 @@ export class Screen {
     this.lines = [];
   }
 
+  /** 强制下一次render()使用全量渲染(用于resize后) */
+  forceFullNext(): void {
+    this.forceFullRender = true;
+  }
+
   /** 提交渲染: 逐行diff，只输出变化行 */
   render(): void {
+    if (this.forceFullRender) {
+      this.forceFullRender = false;
+      this.renderFull();
+      return;
+    }
+
     const maxLines = Math.max(this.lines.length, this.prevLines.length);
     const writes: string[] = [];
 
@@ -107,12 +119,15 @@ export class Screen {
     this.lines = [];
   }
 
-  /** 强制全量渲染(不用diff) */
+  /** 强制全量渲染(不用diff，不滚动) */
   renderFull(): void {
     process.stdout.write(cursorTo(1, 1));
     const maxLines = Math.max(this.lines.length, this.prevLines.length);
     for (let i = 0; i < maxLines; i++) {
-      process.stdout.write(clearLine() + (this.lines[i] || '') + '\n');
+      process.stdout.write(clearLine() + (this.lines[i] || ''));
+      if (i < maxLines - 1) {
+        process.stdout.write('\n');
+      }
     }
     this.prevLines = [...this.lines];
     this.lines = [];

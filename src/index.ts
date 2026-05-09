@@ -59,27 +59,37 @@ async function main(): Promise<void> {
   try {
     menuUI.init();
 
-    const runMode = await selectRunMode();
+    // 主循环: 支持Esc从配置返回主菜单
+    while (true) {
+      const runMode = await selectRunMode();
 
-    if (runMode === null) {
-      menuUI.destroy();
-      console.log('\n  再见！\n');
-      return;
-    }
+      if (runMode === null) {
+        menuUI.destroy();
+        console.log('\n  再见！\n');
+        return;
+      }
 
-    switch (runMode) {
-      case RunMode.Local:
-        await runLocalGame(menuUI);
+      try {
+        switch (runMode) {
+          case RunMode.Local:
+            await runLocalGame(menuUI);
+            break;
+          case RunMode.Host:
+            await runHostGame(menuUI);
+            break;
+          case RunMode.Client:
+            await runClientGame(menuUI);
+            break;
+        }
         transferDone = true;
-        break;
-      case RunMode.Host:
-        await runHostGame(menuUI);
-        transferDone = true;
-        break;
-      case RunMode.Client:
-        await runClientGame(menuUI);
-        transferDone = true;
-        break;
+        break; // 游戏正常结束, 退出循环
+      } catch (e: any) {
+        if (e?.message === '配置取消') {
+          // 用户按Esc, 回到主菜单
+          continue;
+        }
+        throw e; // 其他错误继续抛出
+      }
     }
   } finally {
     if (!transferDone) {

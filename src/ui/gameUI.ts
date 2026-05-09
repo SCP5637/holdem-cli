@@ -42,6 +42,7 @@ export class GameUI {
   private lastState: GameState | SerializedGameState | null = null;
   private lastShowAllCards = false;
   private overlayState: OverlayState = { type: 'none' };
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(screen?: Screen, input?: InputHandler) {
     this.screen = screen ?? new Screen();
@@ -70,11 +71,15 @@ export class GameUI {
   }
 
   private handleResize(): void {
-    this.screen.reset();
-    if (this.lastState) {
-      this.renderGame(this.lastState, this.lastShowAllCards);
-      this.reRenderOverlay();
-    }
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.resizeTimer = setTimeout(() => {
+      this.resizeTimer = null;
+      if (this.lastState) {
+        this.screen.forceFullNext();
+        this.renderGame(this.lastState, this.lastShowAllCards);
+        this.reRenderOverlay();
+      }
+    }, 150);
   }
 
   /** resize后重绘当前叠加层 */
@@ -128,13 +133,15 @@ export class GameUI {
       return;
     }
 
-    this.screen.reset();
     const vm = this.toViewModel(state, showAllCards);
     const size = getTerminalSize();
     const lines = renderTable(vm, this.theme, size.width);
 
     for (let i = 0; i < lines.length; i++) {
       this.screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      this.screen.setLine(i, '');
     }
 
     this.screen.render();
@@ -185,11 +192,13 @@ export class GameUI {
       return;
     }
 
-    this.screen.reset();
     const size = getTerminalSize();
     const lines = renderGameOver(players, this.theme, size.width);
     for (let i = 0; i < lines.length; i++) {
       this.screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      this.screen.setLine(i, '');
     }
     this.screen.render();
   }

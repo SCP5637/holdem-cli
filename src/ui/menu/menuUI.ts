@@ -31,6 +31,7 @@ export class MenuUI {
 
   private currentRender: (() => void) | null = null;
   private resizeHandler: (() => void) | null = null;
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     this.screen = new Screen();
@@ -46,10 +47,14 @@ export class MenuUI {
     this.input.enableRawMode();
 
     this.resizeHandler = () => {
-      if (this.currentRender) {
-        this.screen.reset();
-        this.currentRender();
-      }
+      if (this.resizeTimer) clearTimeout(this.resizeTimer);
+      this.resizeTimer = setTimeout(() => {
+        this.resizeTimer = null;
+        if (this.currentRender) {
+          this.screen.forceFullNext();
+          this.currentRender();
+        }
+      }, 150);
     };
     this.screen.onResize(this.resizeHandler);
 
@@ -64,6 +69,7 @@ export class MenuUI {
   /** 完全清理 — 退出交替屏幕和raw模式 */
   destroy(): void {
     activeContext = null;
+    if (this.resizeTimer) { clearTimeout(this.resizeTimer); this.resizeTimer = null; }
     if (this.fallbackMode) return;
     this.input.disableRawMode();
     this.screen.exit();
@@ -76,6 +82,7 @@ export class MenuUI {
   transfer(): { screen: Screen; input: InputHandler } {
     activeContext = null;
     this.currentRender = null;
+    if (this.resizeTimer) { clearTimeout(this.resizeTimer); this.resizeTimer = null; }
     this.input.removeAllListeners();
     return { screen: this.screen, input: this.input };
   }
