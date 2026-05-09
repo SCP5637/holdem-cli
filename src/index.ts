@@ -27,6 +27,7 @@ import {
   startWaitingAnimation,
   showPhaseTransitionAnimation
 } from './ui/gameRenderer';
+import { centerVisual } from './ui/terminal';
 import {
   renderRemoteGameState,
   renderRemoteHandResult,
@@ -171,9 +172,11 @@ async function runHostGame(): Promise<void> {
   // 等待玩家连接阶段 - 可配置空座位名称
   let gameReady = false;
   while (!gameReady) {
-    console.log('\n  ╔══════════════════════════════════════════════════════════════╗');
-    console.log('  ║                      等待玩家连接                              ║');
-    console.log('  ╚══════════════════════════════════════════════════════════════╝');
+    const BOX_W = 60;
+    const INNER = BOX_W - 2;
+    console.log('\n  ╔' + '═'.repeat(BOX_W) + '╗');
+    console.log('  ║ ' + centerVisual('等待玩家连接', INNER) + ' ║');
+    console.log('  ╚' + '═'.repeat(BOX_W) + '╝');
     console.log();
 
     // 显示当前座位状态

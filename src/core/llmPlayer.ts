@@ -5,8 +5,6 @@ import { getAvailableActions, getCurrentPlayer } from './gameState';
 import { getOpponentModelInstance } from './ai/index';
 import { getAIAction } from './aiPlayer';
 import { logger } from './logger';
-import { generateText } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
 
 type LLMActionResponse = {
   action?: string;
@@ -122,10 +120,7 @@ async function requestLLMDecision(
   preset: LLMPreset
 ): Promise<string> {
   const baseUrl = normalizeBaseUrl(preset.baseUrl);
-  const openai = createOpenAI({
-    baseURL: baseUrl,
-    apiKey: preset.apiKey
-  });
+  const apiUrl = `${baseUrl}/chat/completions`;
 
   const baseSystemPrompt = `你正在操控一个德州扑克电脑玩家。你必须只返回 JSON，尽快分析并给出答案，不需要解释和其他描述。
 
@@ -145,7 +140,7 @@ JSON 格式: {"action":"fold|check|call|raise|allin","amount":数字可选}
   const userPrompt = JSON.stringify(createDecisionContext(state, player, availableActions));
 
   logger.logLLMRequest(preset.name, {
-    baseUrl,
+    apiUrl,
     model: preset.model,
     temperature: preset.temperature ?? 1,
     maxTokens: OUTPUT_TOKENS,
@@ -154,28 +149,50 @@ JSON 格式: {"action":"fold|check|call|raise|allin","amount":数字可选}
   });
 
   try {
-    const result = await generateText({
-      model: openai(preset.model),
-      temperature: preset.temperature ?? 1,
-      maxTokens: OUTPUT_TOKENS,
-      system: systemPrompt,
-      prompt: userPrompt
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${preset.apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: preset.model,
+        temperature: preset.temperature ?? 1,
+        max_tokens: OUTPUT_TOKENS,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      })
     });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`${response.status} ${response.statusText}${errorText ? ': ' + errorText : ''}`);
+    }
+
+    const data = await response.json() as {
+      choices?: { message?: { content?: string }; finish_reason?: string }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    };
+
+    const content = data.choices?.[0]?.message?.content?.trim();
+    const finishReason = data.choices?.[0]?.finish_reason;
 
     logger.logLLMResponse(preset.name, {
-      text: result.text,
-      finishReason: result.finishReason,
-      usage: result.usage
+      text: content,
+      finishReason,
+      usage: data.usage
     });
 
-    if (!result.text) {
+    if (!content) {
       throw new Error('响应内容为空');
     }
 
-    return result.text;
+    return content;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.error('LLM', '调用 Vercel AI SDK 失败', { baseUrl, model: preset.model, error: message });
+    logger.error('LLM', 'LLM API 调用失败', { apiUrl, model: preset.model, error: message });
     throw new Error(message);
   }
 }
