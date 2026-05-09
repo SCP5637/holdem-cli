@@ -43,6 +43,25 @@ export function padVisual(str: string, targetWidth: number): string {
   return str + ' '.repeat(targetWidth - current);
 }
 
+/** 按视觉宽度截断文本，超出部分用 "..." 替代 */
+export function truncateVisual(str: string, maxWidth: number): string {
+  if (maxWidth <= 3) return '.'.repeat(maxWidth);
+  if (visualWidth(str) <= maxWidth) return str;
+
+  const target = maxWidth - 3; // 为 "..." 预留空间
+  let result = '';
+  let currentWidth = 0;
+
+  for (const ch of str) {
+    const chWidth = isWideChar(ch.codePointAt(0)!) ? 2 : 1;
+    if (currentWidth + chWidth > target) break;
+    result += ch;
+    currentWidth += chWidth;
+  }
+
+  return result + '...';
+}
+
 export function centerVisual(str: string, targetWidth: number): string {
   const current = visualWidth(str);
   if (current >= targetWidth) return str;

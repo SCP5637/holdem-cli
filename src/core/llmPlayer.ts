@@ -2,8 +2,7 @@ import { Card, RANK_VALUES, SUIT_SYMBOLS } from '../types/card';
 import { GamePhase, GameState, Player, PlayerAction } from '../types/game';
 import { LLMPreset } from '../types/llm';
 import { getAvailableActions, getCurrentPlayer } from './gameState';
-import { getOpponentModelInstance } from './ai/index';
-import { getAIAction } from './aiPlayer';
+import { getOpponentModelInstance, getFallbackAIAction } from './ai/index';
 import { logger } from './logger';
 
 type LLMActionResponse = {
@@ -13,9 +12,26 @@ type LLMActionResponse = {
 
 const ACTION_VALUES = new Set<string>(Object.values(PlayerAction));
 const DEFAULT_MAX_THINKING_TIME_MS = 30000;
-const MAX_RETRY_COUNT = 3;
 /** 扑克决策JSON最多~100 tokens，1024已足够 */
 const OUTPUT_TOKENS = 1024;
+
+/** 每个LLM玩家的重试次数状态: playerId → maxRetries */
+const playerRetryState = new Map<number, number>();
+
+function getRetryCount(playerId: number): number {
+  return playerRetryState.get(playerId) ?? 3;
+}
+
+function updateRetryState(playerId: number, succeeded: boolean): void {
+  const current = playerRetryState.get(playerId) ?? 3;
+  if (succeeded) {
+    // 成功: 1 → 2, 2 → 1 (交替)
+    playerRetryState.set(playerId, current === 1 ? 2 : 1);
+  } else {
+    // 失败: 始终 → 1
+    playerRetryState.set(playerId, 1);
+  }
+}
 
 export async function getLLMAction(state: GameState, preset: LLMPreset): Promise<{ action: PlayerAction; amount?: number }> {
   const player = getCurrentPlayer(state);
@@ -25,6 +41,7 @@ export async function getLLMAction(state: GameState, preset: LLMPreset): Promise
     return { action: PlayerAction.Fold };
   }
 
+  const maxRetries = getRetryCount(player.id);
   const maxThinkingTime = preset.maxThinkingTimeMs ?? DEFAULT_MAX_THINKING_TIME_MS;
   let lastError: Error | null = null;
 
@@ -32,14 +49,15 @@ export async function getLLMAction(state: GameState, preset: LLMPreset): Promise
     player: player.name,
     preset: preset.name,
     model: preset.model,
+    maxRetries,
     availableActions,
     hand: player.hand.map(formatCard)
   });
 
-  for (let attempt = 1; attempt <= MAX_RETRY_COUNT; attempt++) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`  [LLM] ${player.name} 正在思考... (尝试 ${attempt}/${MAX_RETRY_COUNT})`);
-      logger.debug('LLM', `尝试 ${attempt}/${MAX_RETRY_COUNT}`, { player: player.name, preset: preset.name });
+      console.log(`  [LLM] ${player.name} 正在思考... (尝试 ${attempt}/${maxRetries})`);
+      logger.debug('LLM', `尝试 ${attempt}/${maxRetries}`, { player: player.name, preset: preset.name });
 
       const response = await requestLLMDecisionWithTimeout(
         state,
@@ -64,6 +82,7 @@ export async function getLLMAction(state: GameState, preset: LLMPreset): Promise
           action: normalized.action,
           amount: normalized.amount
         });
+        updateRetryState(player.id, true);
         return normalized;
       }
 
@@ -72,7 +91,7 @@ export async function getLLMAction(state: GameState, preset: LLMPreset): Promise
       lastError = error as Error;
       const isTimeout = lastError.message.includes('超时');
       const isConfigError = /invalid|unsupported|not found|unauthorized|max_tokens|超出/i.test(lastError.message);
-      console.log(`  [LLM] 尝试 ${attempt}/${MAX_RETRY_COUNT} 失败: ${lastError.message}${isTimeout ? ' (超时)' : ''}`);
+      console.log(`  [LLM] 尝试 ${attempt}/${maxRetries} 失败: ${lastError.message}${isTimeout ? ' (超时)' : ''}`);
       logger.logLLMError(preset.name, lastError);
 
       // 配置错误不重试
@@ -80,7 +99,7 @@ export async function getLLMAction(state: GameState, preset: LLMPreset): Promise
         break;
       }
 
-      if (attempt < MAX_RETRY_COUNT) {
+      if (attempt < maxRetries) {
         const delayMs = Math.min(1000 * attempt, 3000);
         logger.debug('LLM', `等待 ${delayMs}ms 后重试`);
         await sleep(delayMs);
@@ -88,13 +107,16 @@ export async function getLLMAction(state: GameState, preset: LLMPreset): Promise
     }
   }
 
-  console.log(`  [LLM] ${player.name} 在 ${MAX_RETRY_COUNT} 次尝试后仍失败，改用普通 AI: ${lastError?.message}`);
-  logger.warn('LLM', `所有尝试失败，回退到普通 AI`, {
+  // 所有重试耗尽 → 回退到高难度AI
+  updateRetryState(player.id, false);
+  console.log(`  [LLM] ${player.name} 在 ${maxRetries} 次尝试后仍失败，改用高级 AI (High/Ultra/Max 随机): ${lastError?.message}`);
+  logger.warn('LLM', `所有尝试失败，回退到高级 AI`, {
     player: player.name,
     preset: preset.name,
+    maxRetries,
     lastError: lastError?.message
   });
-  return getAIAction(state);
+  return getFallbackAIAction(state);
 }
 
 async function requestLLMDecisionWithTimeout(

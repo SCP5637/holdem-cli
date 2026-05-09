@@ -223,6 +223,7 @@ export class GameUI {
     const line = centerAnsi(themed(text, this.theme.accent), size.width);
     this.screen.setLine(size.height - 1, line);
     this.screen.render();
+    this.screen.forceFullNext();
   }
 
   /** 屏幕底部显示消息 */
@@ -237,6 +238,7 @@ export class GameUI {
     const line = centerAnsi(themed(msg, c), size.width);
     this.screen.setLine(size.height - 1, line);
     this.screen.render();
+    this.screen.forceFullNext();
   }
 
   // ============ 动画 ============
@@ -270,6 +272,7 @@ export class GameUI {
       this.spinnerTimer = null;
     }
     this.spinnerMsg = null;
+    this.screen.forceFullNext();
   }
 
   /** 阶段过渡动画。清屏后显示进度条，避免旧牌桌内容残留 */

@@ -5,7 +5,7 @@
 
 import { Theme, themed, chipText } from '../theme';
 import { centerAnsi, padAnsi } from '../engine/ansi';
-import { visualWidth, stripAnsi } from '../terminal';
+import { visualWidth, stripAnsi, truncateVisual } from '../terminal';
 
 const BOX_H = '─';
 const BOX_V = '│';
@@ -16,17 +16,32 @@ const BOX_BR = '┘';
 const BOX_HL = '├';
 const BOX_HR = '┤';
 
-const MENU_BOX_W = 62;
+const BOX_W = 62;
+
+/** 框体内一行：边框 + 左右各1空格内边距 + 内容，总视觉宽度 = inner + 2 = BOX_W */
+function boxLine(content: string, inner: number, borderColor: string): string {
+  const maxContentW = inner - 2;
+  const plain = stripAnsi(content);
+  let display: string;
+  if (visualWidth(plain) > maxContentW) {
+    // 需要截断：截断纯文本后重新组装（丢失ANSI颜色）
+    display = truncateVisual(plain, maxContentW);
+  } else {
+    display = content;
+  }
+  return themed(BOX_V, borderColor) + padAnsi(' ' + display + ' ', inner) + themed(BOX_V, borderColor);
+}
 
 /** 居中标题框 */
 export function renderTitle(title: string, theme: Theme, width: number): string[] {
-  const boxW = Math.min(width - 4, MENU_BOX_W);
+  const boxW = Math.min(width - 4, BOX_W);
   const inner = boxW - 2;
   const lines: string[] = [];
   const b = theme.border;
+  const titleText = truncateVisual(title, inner - 2);
   lines.push('');
   lines.push(centerAnsi(themed(BOX_TL + BOX_H.repeat(inner) + BOX_TR, b), width));
-  lines.push(centerAnsi(themed(BOX_V, b) + ' ' + centerAnsi(themed(title, theme.phaseTitle), inner) + ' ' + themed(BOX_V, b), width));
+  lines.push(centerAnsi(boxLine(centerAnsi(themed(titleText, theme.phaseTitle), inner - 2), inner, b), width));
   lines.push(centerAnsi(themed(BOX_BL + BOX_H.repeat(inner) + BOX_BR, b), width));
   lines.push('');
   return lines;
@@ -44,7 +59,7 @@ export function renderSelectionList(
   theme: Theme,
   width: number
 ): string[] {
-  const boxW = Math.min(width - 4, MENU_BOX_W);
+  const boxW = Math.min(width - 4, BOX_W);
   const inner = boxW - 2;
   const b = theme.border;
   const lines: string[] = [];
@@ -60,12 +75,10 @@ export function renderSelectionList(
     }
 
     const cursor = i === selectedIndex ? themed('▶', theme.highlight) : ' ';
-    const label = i === selectedIndex ? themed(opt, theme.highlight) : opt;
+    const labelText = truncateVisual(opt, inner - 4);
+    const label = i === selectedIndex ? themed(labelText, theme.highlight) : labelText;
     const content = `${cursor} ${label}`;
-    lines.push(centerAnsi(
-      themed(BOX_V, b) + ' ' + padAnsi(content, inner) + ' ' + themed(BOX_V, b),
-      width
-    ));
+    lines.push(centerAnsi(boxLine(content, inner, b), width));
   }
 
   lines.push(centerAnsi(themed(BOX_BL + BOX_H.repeat(inner) + BOX_BR, b), width));
@@ -85,24 +98,18 @@ export function renderTextBox(
   theme: Theme,
   width: number
 ): string[] {
-  const boxW = Math.min(width - 4, 55);
+  const boxW = Math.min(width - 4, BOX_W);
   const inner = boxW - 2;
   const b = theme.border;
   const lines: string[] = [];
 
   lines.push('');
   lines.push(centerAnsi(themed(BOX_TL + BOX_H.repeat(inner) + BOX_TR, b), width));
-  lines.push(centerAnsi(
-    themed(BOX_V, b) + ' ' + padAnsi(themed(prompt, theme.accent), inner) + ' ' + themed(BOX_V, b),
-    width
-  ));
+  lines.push(centerAnsi(boxLine(themed(prompt, theme.accent), inner, b), width));
   lines.push(centerAnsi(themed(BOX_HL + BOX_H.repeat(inner) + BOX_HR, b), width));
 
   const displayVal = value + (value.length < 40 ? themed('▍', theme.accent) : '');
-  lines.push(centerAnsi(
-    themed(BOX_V, b) + ' ' + padAnsi(displayVal, inner) + ' ' + themed(BOX_V, b),
-    width
-  ));
+  lines.push(centerAnsi(boxLine(displayVal, inner, b), width));
 
   lines.push(centerAnsi(themed(BOX_BL + BOX_H.repeat(inner) + BOX_BR, b), width));
   lines.push('');
@@ -120,30 +127,21 @@ export function renderNumberInput(
   theme: Theme,
   width: number
 ): string[] {
-  const boxW = Math.min(width - 4, 55);
+  const boxW = Math.min(width - 4, BOX_W);
   const inner = boxW - 2;
   const b = theme.border;
   const lines: string[] = [];
 
   lines.push('');
   lines.push(centerAnsi(themed(BOX_TL + BOX_H.repeat(inner) + BOX_TR, b), width));
-  lines.push(centerAnsi(
-    themed(BOX_V, b) + ' ' + padAnsi(themed(prompt, theme.accent), inner) + ' ' + themed(BOX_V, b),
-    width
-  ));
+  lines.push(centerAnsi(boxLine(themed(prompt, theme.accent), inner, b), width));
   lines.push(centerAnsi(themed(BOX_HL + BOX_H.repeat(inner) + BOX_HR, b), width));
 
   const displayVal = value + (value.length < 40 ? themed('▍', theme.accent) : '');
-  lines.push(centerAnsi(
-    themed(BOX_V, b) + ' ' + padAnsi(displayVal, inner) + ' ' + themed(BOX_V, b),
-    width
-  ));
+  lines.push(centerAnsi(boxLine(displayVal, inner, b), width));
 
   const hint = `范围: ${min} ~ ${max}`;
-  lines.push(centerAnsi(
-    themed(BOX_V, b) + ' ' + padAnsi(themed(hint, theme.dim), inner) + ' ' + themed(BOX_V, b),
-    width
-  ));
+  lines.push(centerAnsi(boxLine(themed(hint, theme.dim), inner, b), width));
 
   lines.push(centerAnsi(themed(BOX_BL + BOX_H.repeat(inner) + BOX_BR, b), width));
   lines.push('');
@@ -159,26 +157,20 @@ export function renderYesNo(
   theme: Theme,
   width: number
 ): string[] {
-  const boxW = Math.min(width - 4, 50);
+  const boxW = Math.min(width - 4, BOX_W);
   const inner = boxW - 2;
   const b = theme.border;
   const lines: string[] = [];
 
   lines.push('');
   lines.push(centerAnsi(themed(BOX_TL + BOX_H.repeat(inner) + BOX_TR, b), width));
-  lines.push(centerAnsi(
-    themed(BOX_V, b) + ' ' + padAnsi(themed(prompt, theme.accent), inner) + ' ' + themed(BOX_V, b),
-    width
-  ));
+  lines.push(centerAnsi(boxLine(themed(prompt, theme.accent), inner, b), width));
   lines.push(centerAnsi(themed(BOX_HL + BOX_H.repeat(inner) + BOX_HR, b), width));
 
   const yLabel = selectedYes ? themed('[ Y ]', theme.highlight) : themed('  Y  ', theme.dim);
   const nLabel = !selectedYes ? themed('[ N ]', theme.highlight) : themed('  N  ', theme.dim);
   const toggle = `    ${yLabel}    ${nLabel}`;
-  lines.push(centerAnsi(
-    themed(BOX_V, b) + ' ' + padAnsi(toggle, inner) + ' ' + themed(BOX_V, b),
-    width
-  ));
+  lines.push(centerAnsi(boxLine(toggle, inner, b), width));
 
   lines.push(centerAnsi(themed(BOX_BL + BOX_H.repeat(inner) + BOX_BR, b), width));
   lines.push('');
@@ -194,23 +186,17 @@ export function renderInfoBox(
   theme: Theme,
   width: number
 ): string[] {
-  const boxW = Math.min(width - 4, 60);
+  const boxW = Math.min(width - 4, BOX_W);
   const inner = boxW - 2;
   const b = theme.border;
   const result: string[] = [];
 
   result.push(centerAnsi(themed(BOX_TL + BOX_H.repeat(inner) + BOX_TR, b), width));
-  result.push(centerAnsi(
-    themed(BOX_V, b) + ' ' + padAnsi(themed(title, theme.phaseTitle), inner) + ' ' + themed(BOX_V, b),
-    width
-  ));
+  result.push(centerAnsi(boxLine(themed(title, theme.phaseTitle), inner, b), width));
   result.push(centerAnsi(themed(BOX_HL + BOX_H.repeat(inner) + BOX_HR, b), width));
 
   for (const line of lines_) {
-    result.push(centerAnsi(
-      themed(BOX_V, b) + ' ' + padAnsi(line, inner) + ' ' + themed(BOX_V, b),
-      width
-    ));
+    result.push(centerAnsi(boxLine(line, inner, b), width));
   }
 
   result.push(centerAnsi(themed(BOX_BL + BOX_H.repeat(inner) + BOX_BR, b), width));
@@ -224,7 +210,7 @@ export function renderDescribedList(
   theme: Theme,
   width: number
 ): string[] {
-  const boxW = Math.min(width - 4, 64);
+  const boxW = Math.min(width - 4, BOX_W);
   const inner = boxW - 2;
   const b = theme.border;
   const lines: string[] = [];
@@ -235,22 +221,17 @@ export function renderDescribedList(
     const opt = options[i];
     const cursor = i === selectedIndex ? themed('▶', theme.highlight) : ' ';
     const num = themed(`${i + 1}.`, theme.dim);
+    const rawLabel = truncateVisual(opt.label, inner - 6);
     const label = i === selectedIndex
-      ? themed(opt.label, theme.highlight)
-      : opt.label;
+      ? themed(rawLabel, theme.highlight)
+      : rawLabel;
     const desc = themed(opt.desc, theme.dim);
 
     const line1 = `${cursor} ${num} ${label}`;
-    lines.push(centerAnsi(
-      themed(BOX_V, b) + ' ' + padAnsi(line1, inner) + ' ' + themed(BOX_V, b),
-      width
-    ));
+    lines.push(centerAnsi(boxLine(line1, inner, b), width));
 
     const line2 = `     ${desc}`;
-    lines.push(centerAnsi(
-      themed(BOX_V, b) + ' ' + padAnsi(line2, inner) + ' ' + themed(BOX_V, b),
-      width
-    ));
+    lines.push(centerAnsi(boxLine(line2, inner, b), width));
   }
 
   lines.push(centerAnsi(themed(BOX_BL + BOX_H.repeat(inner) + BOX_BR, b), width));

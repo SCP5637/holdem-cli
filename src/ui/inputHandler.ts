@@ -849,7 +849,7 @@ async function configureLLMPresets(): Promise<LLMPreset[]> {
 
   if (isTUI()) {
     while (true) {
-      const presetNames = presets.map((p, i) => `[${i + 1}] ${p.name} - ${p.model} - ${p.baseUrl}`);
+      const presetNames = presets.map((p, i) => `[${i + 1}] ${p.name} - ${p.baseUrl}`);
       const options = presetNames.length > 0 ? presetNames : ['(无预设)'];
       const actions = ['新增预设', '覆盖预设', '删除预设', '返回'];
 

@@ -152,6 +152,31 @@ function recordOpponentActions(state: GameState): void {
   }
 }
 
+/** LLM回退用：从High/Ultra/Max中随机选策略决策 */
+export async function getFallbackAIAction(state: GameState): Promise<{ action: PlayerAction; amount?: number }> {
+  const player = getCurrentPlayer(state);
+  const availableActions = getAvailableActions(state);
+
+  if (availableActions.length === 0) {
+    return { action: PlayerAction.Fold };
+  }
+
+  const diffs = [AIDifficulty.High, AIDifficulty.Ultra, AIDifficulty.Max];
+  const randomDiff = diffs[Math.floor(Math.random() * diffs.length)];
+  const strategy = getRandomStrategy(randomDiff);
+
+  const ctx: AIDecisionContext = {
+    state,
+    player,
+    availableActions,
+    monteCarlo: getMonteCarloEngine(),
+    opponentModel: getOpponentModel(),
+    drawDetector: { detectDraws }
+  };
+
+  return strategy.decide(ctx);
+}
+
 /** 获取对手模型实例 (供LLM上下文使用) */
 export function getOpponentModelInstance(): OpponentModelInterface {
   return getOpponentModel();
