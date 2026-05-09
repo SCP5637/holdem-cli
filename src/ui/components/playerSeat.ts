@@ -191,12 +191,29 @@ function renderMinimal(data: PlayerSeatData, theme: Theme, width: number): strin
   return lines;
 }
 
+function waveYouBadge(theme: Theme): string {
+  const text = '(你)';
+  const bright = '\x1b[34;1m';
+  const dim = '\x1b[34m';
+  const R = '\x1b[0m';
+  const idx = Math.floor(Date.now() / 200) % text.length;
+  let result = '';
+  for (let i = 0; i < text.length; i++) {
+    if (i === idx) {
+      result += bright + text[i];
+    } else {
+      result += dim + text[i];
+    }
+  }
+  return result + R;
+}
+
 function buildBadges(data: PlayerSeatData, theme: Theme): string {
   const badges: string[] = [];
   if (data.isDealer) badges.push(themed('D', theme.dealer));
   if (data.isSmallBlind) badges.push(themed('SB', theme.dim));
   if (data.isBigBlind) badges.push(themed('BB', theme.dim));
-  if (data.isYou) badges.push(themed('(你)', theme.accent));
+  if (data.isYou) badges.push(waveYouBadge(theme));
   if (data.isRemote) badges.push(themed('[网]', theme.accent));
   if (data.isAllIn) badges.push(themed('ALL-IN', theme.warning));
   return badges.join(' ');

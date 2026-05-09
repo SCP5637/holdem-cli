@@ -433,6 +433,8 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
  */
 async function playHandHost(state: GameState, llmPresetMap: Map<string, LLMPreset>, hostConfig: HostConfig): Promise<void> {
   logger.info('GAME', '开始新的一手牌', { hand: state.handNumber, dealer: state.dealerIndex });
+  gameUI!.clearSystemLog();
+  gameUI!.addSystemMessage(`第 ${state.handNumber} 手牌开始`);
   gameUI!.renderGame(state);
   gameServer!.broadcastGameState(state);
 
@@ -446,6 +448,7 @@ async function playHandHost(state: GameState, llmPresetMap: Map<string, LLMPrese
     if (isBettingRoundComplete(state)) {
       const prevPhase = state.currentPhase;
       const nextPhase = getNextPhase(prevPhase);
+      gameUI!.addSystemMessage(`${getPhaseLabel(prevPhase)} → ${getPhaseLabel(nextPhase)}`);
       await gameUI!.showPhaseTransition(5000, prevPhase, nextPhase);
       advancePhase(state);
       logger.logPhaseChange(prevPhase, state.currentPhase);
@@ -480,8 +483,6 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
       const seatConfig = hostConfig.seats[player.id];
       const isRemotePlayer = seatConfig?.type === SeatType.Remote;
 
-      let stopAnimation: (() => void) | null = null;
-
       if (isRemotePlayer) {
         // 等待远程玩家动作
         gameUI!.showMessage(`等待 ${player.name} 行动`);
@@ -498,6 +499,8 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
           if (success) {
             recordPlayerAction(player.id, action.action, toCall, potBefore);
             gameUI!.showAction(player.name, action.action, action.amount);
+            gameUI!.renderGame(state);
+            gameServer!.broadcastGameState(state);
             logger.logGameAction(player.name, action.action, action.amount);
           }
         }
@@ -513,6 +516,8 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
           if (success) {
             recordPlayerAction(player.id, action.action, toCall, potBefore);
             gameUI!.showAction(player.name, action.action, action.amount);
+            gameUI!.renderGame(state);
+            gameServer!.broadcastGameState(state);
             logger.logGameAction(player.name, action.action, action.amount);
           }
         }
@@ -521,13 +526,11 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
         const thinkingMessage = player.llmPresetName
           ? `[LLM] ${player.name} 正在思考`
           : `${player.name} 正在思考`;
-        stopAnimation = gameUI!.startSpinner(thinkingMessage);
+        gameUI!.startWaitAnimation(thinkingMessage);
 
         const action = await getAction(state, player, llmPresetMap);
 
-        if (stopAnimation) {
-          stopAnimation();
-        }
+        gameUI!.stopWaitAnimation();
 
         if (action) {
           const toCall = state.currentBet - player.currentBet;
@@ -537,6 +540,8 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
           if (success) {
             recordPlayerAction(player.id, action.action, toCall, potBefore);
             gameUI!.showAction(player.name, action.action, action.amount);
+            gameUI!.renderGame(state);
+            gameServer!.broadcastGameState(state);
             logger.logGameAction(player.name, action.action, action.amount);
           }
         }
@@ -573,6 +578,13 @@ async function waitForRemoteAction(): Promise<{ action: PlayerAction; amount?: n
  */
 async function resolveHandHost(state: GameState): Promise<void> {
   const winners = determineHandWinners(state);
+  const activePlayers = state.players.filter(p => p.isActive);
+
+  if (activePlayers.length === 1) {
+    gameUI!.addSystemMessage(`${activePlayers[0].name} 赢得底池 (其余弃牌)`);
+  } else {
+    gameUI!.addSystemMessage('摊牌');
+  }
 
   const handDescriptions = new Map<number, string>();
   for (const player of state.players) {
@@ -630,6 +642,8 @@ function getAvailableActionsFromState(gameState: SerializedGameState, mySeatInde
 // 原本地游戏函数保持不变
 async function playHand(state: GameState, llmPresetMap: Map<string, LLMPreset>): Promise<void> {
   logger.info('GAME', '开始新的一手牌', { hand: state.handNumber, dealer: state.dealerIndex });
+  gameUI!.clearSystemLog();
+  gameUI!.addSystemMessage(`第 ${state.handNumber} 手牌开始`);
   gameUI!.renderGame(state);
 
   while (!isHandOver(state)) {
@@ -642,6 +656,7 @@ async function playHand(state: GameState, llmPresetMap: Map<string, LLMPreset>):
     if (isBettingRoundComplete(state)) {
       const prevPhase = state.currentPhase;
       const nextPhase = getNextPhase(prevPhase);
+      gameUI!.addSystemMessage(`${getPhaseLabel(prevPhase)} → ${getPhaseLabel(nextPhase)}`);
       await gameUI!.showPhaseTransition(5000, prevPhase, nextPhase);
       advancePhase(state);
       logger.logPhaseChange(prevPhase, state.currentPhase);
@@ -667,18 +682,17 @@ async function playBettingRound(state: GameState, llmPresetMap: Map<string, LLMP
     if (player.isActive && !player.isAllIn) {
       gameUI!.renderGame(state);
 
-      let stopAnimation: (() => void) | null = null;
       if (!player.isHuman) {
         const thinkingMessage = player.llmPresetName
           ? `[LLM] ${player.name} 正在思考`
           : `${player.name} 正在思考`;
-        stopAnimation = gameUI!.startSpinner(thinkingMessage);
+        gameUI!.startWaitAnimation(thinkingMessage);
       }
 
       const action = await getAction(state, player, llmPresetMap);
 
-      if (stopAnimation) {
-        stopAnimation();
+      if (!player.isHuman) {
+        gameUI!.stopWaitAnimation();
       }
 
       if (action) {
@@ -689,6 +703,7 @@ async function playBettingRound(state: GameState, llmPresetMap: Map<string, LLMP
         if (success) {
           recordPlayerAction(player.id, action.action, toCall, potBefore);
           gameUI!.showAction(player.name, action.action, action.amount);
+          gameUI!.renderGame(state);
           logger.logGameAction(player.name, action.action, action.amount);
         }
       }
@@ -725,6 +740,13 @@ async function getAction(state: GameState, player: Player, llmPresetMap: Map<str
 
 async function resolveHand(state: GameState): Promise<void> {
   const winners = determineHandWinners(state);
+  const activePlayers = state.players.filter(p => p.isActive);
+
+  if (activePlayers.length === 1) {
+    gameUI!.addSystemMessage(`${activePlayers[0].name} 赢得底池 (其余弃牌)`);
+  } else {
+    gameUI!.addSystemMessage('摊牌');
+  }
 
   const handDescriptions = new Map<number, string>();
   for (const player of state.players) {
@@ -763,6 +785,13 @@ function getNextPhase(current: string): string {
   const order = ['preflop', 'flop', 'turn', 'river', 'showdown'];
   const idx = order.indexOf(current);
   return idx >= 0 && idx < order.length - 1 ? order[idx + 1] : '';
+}
+
+function getPhaseLabel(phase: string): string {
+  const labels: Record<string, string> = {
+    preflop: '翻牌前', flop: '翻牌圈', turn: '转牌圈', river: '河牌圈', showdown: '摊牌'
+  };
+  return labels[phase] || phase;
 }
 
 function formatCard(card: Card): string {

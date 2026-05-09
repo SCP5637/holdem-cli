@@ -136,12 +136,12 @@ export class InputHandler {
           resolve({ type: 'escape', value: 0 });
           return;
         }
-        if (key.name === 'up') {
+        if (key.name === 'up' || key.name === 'left') {
           cleanup();
           resolve({ type: 'arrow', value: -1 });
           return;
         }
-        if (key.name === 'down') {
+        if (key.name === 'down' || key.name === 'right') {
           cleanup();
           resolve({ type: 'arrow', value: 1 });
           return;

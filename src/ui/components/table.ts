@@ -54,33 +54,40 @@ export function renderTable(vm: TableViewModel, theme: Theme, width: number): st
   lines.push(...topLines);
   lines.push('');
 
-  // 4. 牌桌中央区域(公共牌+底池)
+  // 4. 牌桌中央区域(公共牌+底池) — 绿色封闭框体
   const tableW = Math.min(width - 4, 72);
+  const boxW = Math.min(tableW + 4, width - 2);
+  const boxInner = boxW - 2;
+  const b = theme.tableBg;
 
-  // 分隔线(模拟牌桌绿边)
-  const divider = themed('━'.repeat(Math.min(tableW + 4, width - 2)), theme.tableBg);
-  lines.push(centerAnsi(divider, width));
+  // 顶部边框
+  lines.push(centerAnsi(themed('┏' + '━'.repeat(boxInner) + '┓', b), width));
 
   // 公共牌
   if (vm.communityCards.length > 0) {
     const ccData: CommunityCardsData = { cards: vm.communityCards };
     const ccLines = renderCommunityCards(ccData, theme, tableW);
     for (const line of ccLines) {
-      lines.push(centerAnsi(line, width));
+      const inner = centerAnsi(line, boxInner);
+      lines.push(centerAnsi(themed('┃', b) + inner + themed('┃', b), width));
     }
   } else {
-    lines.push(centerAnsi(themed('[ 等待发牌 ]', theme.dim), width));
+    const placeholder = centerAnsi(themed('[ 等待发牌 ]', theme.dim), boxInner);
+    lines.push(centerAnsi(themed('┃', b) + placeholder + themed('┃', b), width));
   }
 
-  // 空白行 + Pot信息
-  lines.push('');
+  // 空白行
+  lines.push(centerAnsi(themed('┃', b) + ' '.repeat(boxInner) + themed('┃', b), width));
+
+  // Pot信息
   const potLines = renderPotBox(vm.potData, theme, tableW);
   for (const line of potLines) {
-    lines.push(centerAnsi(line, width));
+    const inner = centerAnsi(line, boxInner);
+    lines.push(centerAnsi(themed('┃', b) + inner + themed('┃', b), width));
   }
 
-  // 分隔线
-  lines.push(centerAnsi(divider, width));
+  // 底部边框
+  lines.push(centerAnsi(themed('┗' + '━'.repeat(boxInner) + '┛', b), width));
   lines.push('');
 
   // 5. 下排玩家

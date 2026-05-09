@@ -6,12 +6,14 @@
 
 import { Screen } from './engine/screen';
 import { InputHandler } from './engine/input';
-import { Theme, defaultTheme, themed, chipText } from './theme';
+import { Theme, defaultTheme, themed } from './theme';
 import { renderTable, TableViewModel } from './components/table';
 import { renderActionPanel, renderRaiseInput } from './components/actionPanel';
 import { renderHandResult, HandResultPlayer } from './components/handResult';
 import { renderGameOver, GameOverPlayer } from './components/gameOver';
-import { renderSpinner, renderProgressBar } from './components/spinner';
+import { renderProgressBar } from './components/spinner';
+import { renderActionLog, ActionLogEntry } from './components/actionLog';
+import { renderWaitPanel } from './components/waitPanel';
 import { centerAnsi } from './engine/ansi';
 import { getTerminalSize, isTTY } from './terminal';
 
@@ -21,7 +23,7 @@ import { Card, Suit, Rank } from '../types/card';
 
 type OverlayState =
   | { type: 'none' }
-  | { type: 'action-panel'; actions: PlayerAction[] }
+  | { type: 'action-panel'; actions: PlayerAction[]; selectedIndex?: number }
   | { type: 'raise-input'; text: string }
   | { type: 'enter-prompt'; message?: string }
   | { type: 'enter-or-zero'; message?: string };
@@ -30,19 +32,40 @@ const PHASE_NAMES: Record<string, string> = {
   preflop: '翻牌前', flop: '翻牌圈', turn: '转牌圈', river: '河牌圈', showdown: '摊牌'
 };
 
+function calcBottomPanelH(size: { height: number }): number {
+  if (size.height >= 30) return 8;
+  if (size.height >= 24) return 7;
+  return 6;
+}
+
+function calcHalfWidth(totalWidth: number): number {
+  return Math.floor((totalWidth - 1) / 2);
+}
+
+function calcLogWidth(totalWidth: number): number {
+  if (totalWidth < 60) return 0;
+  return calcHalfWidth(totalWidth);
+}
+
+function calcPanelWidth(totalWidth: number): number {
+  return calcHalfWidth(totalWidth);
+}
+
 export class GameUI {
   private screen: Screen;
   private input: InputHandler;
   private theme: Theme;
   private mySeatIdx = -1;
-  private spinnerTimer: ReturnType<typeof setInterval> | null = null;
-  private spinnerFrame = 0;
-  private spinnerMsg: string | null = null;
   private fallbackMode: boolean;
   private lastState: GameState | SerializedGameState | null = null;
   private lastShowAllCards = false;
   private overlayState: OverlayState = { type: 'none' };
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private actionLogScroll = 0;
+  private waitFrame = 0;
+  private waitTimer: ReturnType<typeof setInterval> | null = null;
+  private waitMsg = '';
+  private systemLog: ActionLogEntry[] = [];
 
   constructor(screen?: Screen, input?: InputHandler) {
     this.screen = screen ?? new Screen();
@@ -57,11 +80,22 @@ export class GameUI {
     if (this.fallbackMode) return;
     this.screen.enter();
     this.screen.onResize(() => this.handleResize());
+    this.input.enableRawMode();
+    this.input.onKey((key) => {
+      if (key.name === 'up') {
+        this.actionLogScroll++;
+        if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
+      } else if (key.name === 'down') {
+        this.actionLogScroll = Math.max(0, this.actionLogScroll - 1);
+        if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
+      }
+    });
   }
 
   destroy(): void {
-    this.stopSpinner();
+    this.destroyTimers();
     if (this.fallbackMode) return;
+    this.input.removeAllListeners();
     this.input.disableRawMode();
     this.screen.exit();
   }
@@ -82,43 +116,11 @@ export class GameUI {
     }, 150);
   }
 
-  /** resize后重绘当前叠加层 */
+  /** resize后重绘当前叠加层 — 底部面板由renderGame统一渲染 */
   private reRenderOverlay(): void {
-    const size = getTerminalSize();
-    switch (this.overlayState.type) {
-      case 'action-panel': {
-        const panelLines = renderActionPanel({ actions: this.overlayState.actions }, this.theme, size.width);
-        const panelStart = size.height - panelLines.length;
-        for (let i = 0; i < panelLines.length; i++) {
-          this.screen.setLine(panelStart + i, panelLines[i]);
-        }
-        this.screen.render();
-        break;
-      }
-      case 'raise-input': {
-        const lines = renderRaiseInput(this.overlayState.text, this.theme, size.width);
-        const start = size.height - lines.length;
-        for (let i = 0; i < lines.length; i++) {
-          this.screen.setLine(start + i, lines[i]);
-        }
-        this.screen.render();
-        break;
-      }
-      case 'enter-prompt': {
-        const msg = this.overlayState.message || '按 Enter 键继续...';
-        const line = centerAnsi(themed(msg, this.theme.dim), size.width);
-        this.screen.setLine(size.height - 1, line);
-        this.screen.render();
-        break;
-      }
-      case 'enter-or-zero': {
-        const msg = this.overlayState.message || '按 Enter 继续，或按 0 结束...';
-        const line = centerAnsi(themed(msg, this.theme.dim), size.width);
-        this.screen.setLine(size.height - 1, line);
-        this.screen.render();
-        break;
-      }
-    }
+    // renderGame handles all overlay rendering via the bottom panel
+    // This method kept for compatibility; forceFullNext ensures clean state
+    this.screen.forceFullNext();
   }
 
   // ============ 游戏渲染 ============
@@ -135,16 +137,95 @@ export class GameUI {
 
     const vm = this.toViewModel(state, showAllCards);
     const size = getTerminalSize();
-    const lines = renderTable(vm, this.theme, size.width);
+    const bottomH = calcBottomPanelH(size);
+    const logW = calcLogWidth(size.width);
+    const tableMax = size.height - bottomH;
 
-    for (let i = 0; i < lines.length; i++) {
-      this.screen.setLine(i, lines[i]);
+    const tableLines = renderTable(vm, this.theme, size.width);
+
+    // Table area
+    for (let i = 0; i < Math.min(tableLines.length, tableMax); i++) {
+      this.screen.setLine(i, tableLines[i]);
     }
-    for (let i = lines.length; i < size.height; i++) {
+    for (let i = tableLines.length; i < tableMax; i++) {
       this.screen.setLine(i, '');
     }
 
+    // Bottom panel
+    const bottomStart = tableMax;
+
+    if (logW > 0) {
+      const panelW = calcPanelWidth(size.width);
+      const logLines = this.renderLogPanel(state, logW, bottomH);
+      const rightLines = this.renderRightPanel(panelW, bottomH);
+
+      for (let i = 0; i < bottomH; i++) {
+        const left = logLines[i] || '';
+        const right = rightLines[i] || '';
+        this.screen.setLine(bottomStart + i, left + ' ' + right);
+      }
+    } else {
+      const rightLines = this.renderRightPanel(size.width, bottomH);
+      for (let i = 0; i < bottomH; i++) {
+        this.screen.setLine(bottomStart + i, rightLines[i] || '');
+      }
+    }
+
     this.screen.render();
+  }
+
+  /** 底部左侧：行动日志 */
+  private renderLogPanel(state: GameState | SerializedGameState, width: number, height: number): string[] {
+    const entries: ActionLogEntry[] = (state as any).actionLog
+      ? (state as any).actionLog.map((a: any) => ({
+          playerName: a.playerName,
+          action: a.action,
+          amount: a.amount,
+          time: a.time,
+        }))
+      : [];
+    return renderActionLog(
+      { entries, systemEntries: this.systemLog, scrollOffset: this.actionLogScroll },
+      this.theme, width, height
+    );
+  }
+
+  /** 添加系统消息到日志 (阶段切换、手牌开始等) */
+  addSystemMessage(text: string): void {
+    const d = new Date();
+    const h = String(d.getHours()).padStart(2, '0');
+    const m = String(d.getMinutes()).padStart(2, '0');
+    const s = String(d.getSeconds()).padStart(2, '0');
+    this.systemLog.push({
+      playerName: '系统',
+      action: text,
+      time: `{${h}:${m}:${s}}`,
+    });
+  }
+
+  /** 清空系统日志 (每手牌开始时调用) */
+  clearSystemLog(): void {
+    this.systemLog = [];
+  }
+
+  /** 底部右侧：根据overlay状态 */
+  private renderRightPanel(width: number, height: number): string[] {
+    switch (this.overlayState.type) {
+      case 'action-panel':
+        return renderActionPanel({ actions: this.overlayState.actions, selectedIndex: this.overlayState.selectedIndex }, this.theme, width, height);
+      case 'raise-input':
+        return renderRaiseInput(this.overlayState.text, this.theme, width, height);
+      case 'enter-prompt': {
+        const msg = this.overlayState.message || '按 Enter 键继续...';
+        return renderWaitPanel(0, msg, this.theme, width, height);
+      }
+      case 'enter-or-zero': {
+        const msg = this.overlayState.message || '按 Enter 继续，或按 0 结束';
+        return renderWaitPanel(0, msg, this.theme, width, height);
+      }
+      default:
+        return renderWaitPanel(this.waitFrame, this.waitMsg, this.theme, width, height);
+    }
   }
 
   /** 渲染手牌结果 */
@@ -203,26 +284,17 @@ export class GameUI {
     this.screen.render();
   }
 
-  /** 显示玩家行动消息 */
-  showAction(playerName: string, action: string, amount?: number): void {
-    const actionMap: Record<string, string> = {
-      fold: '弃牌', check: '过牌', call: '跟注', raise: '加注', allin: '全押'
-    };
-    const actionText = actionMap[action] || action;
-    let text = `  → ${playerName} ${actionText}`;
-    if (amount !== undefined && amount > 0) {
-      text += ` ${chipText(amount)}`;
-    }
-
+  /** 显示玩家行动消息 — 行动由renderGame的actionLog自动展示 */
+  showAction(_playerName: string, _action: string, _amount?: number): void {
     if (this.fallbackMode) {
-      console.log(text);
+      const actionMap: Record<string, string> = {
+        fold: '弃牌', check: '过牌', call: '跟注', raise: '加注', allin: '全押'
+      };
+      const actionText = actionMap[_action] || _action;
+      console.log(`  → ${_playerName} ${actionText}`);
       return;
     }
-
-    const size = getTerminalSize();
-    const line = centerAnsi(themed(text, this.theme.accent), size.width);
-    this.screen.setLine(size.height - 1, line);
-    this.screen.render();
+    // actionLog已含此动作，下一帧renderGame自动展示
     this.screen.forceFullNext();
   }
 
@@ -236,43 +308,45 @@ export class GameUI {
     const size = getTerminalSize();
     const c = color || this.theme.dim;
     const line = centerAnsi(themed(msg, c), size.width);
-    this.screen.setLine(size.height - 1, line);
+    const bottomH = calcBottomPanelH(size);
+    this.screen.setLine(size.height - bottomH - 1, line);
     this.screen.render();
     this.screen.forceFullNext();
   }
 
   // ============ 动画 ============
 
-  /** 启动旋转动画，返回停止函数 */
-  startSpinner(message: string): () => void {
-    if (this.fallbackMode) {
-      process.stdout.write(`  ${message}...`);
-      return () => { process.stdout.write(' done\n'); };
-    }
+  /** 启动Wait动画 — 用于非己方回合等待 */
+  startWaitAnimation(message?: string): void {
+    this.waitMsg = message || '';
+    this.waitFrame = 0;
 
-    this.spinnerMsg = message;
-    this.spinnerFrame = 0;
+    if (this.waitTimer) return;
 
-    this.spinnerTimer = setInterval(() => {
-      this.spinnerFrame++;
-      if (this.spinnerMsg) {
-        const size = getTerminalSize();
-        const line = renderSpinner(this.spinnerMsg, this.spinnerFrame, this.theme, size.width);
-        this.screen.setLine(size.height - 1, line);
-        this.screen.render();
+    this.waitTimer = setInterval(() => {
+      this.waitFrame++;
+      if (this.lastState) {
+        this.renderGame(this.lastState, this.lastShowAllCards);
       }
-    }, 150);
-
-    return () => this.stopSpinner();
+    }, 200);
   }
 
-  private stopSpinner(): void {
-    if (this.spinnerTimer) {
-      clearInterval(this.spinnerTimer);
-      this.spinnerTimer = null;
+  /** 停止Wait动画 */
+  stopWaitAnimation(): void {
+    if (this.waitTimer) {
+      clearInterval(this.waitTimer);
+      this.waitTimer = null;
     }
-    this.spinnerMsg = null;
     this.screen.forceFullNext();
+  }
+
+  /** 销毁时清理所有定时器 */
+  private destroyTimers(): void {
+    this.stopWaitAnimation();
+    if (this.resizeTimer) {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = null;
+    }
   }
 
   /** 阶段过渡动画。清屏后显示进度条，避免旧牌桌内容残留 */
@@ -309,84 +383,122 @@ export class GameUI {
 
   // ============ 输入 ============
 
-  /** 等待玩家从可用动作中选择 */
+  /** 等待玩家从可用动作中选择 — 左右键切换/数字跳转/回车确认，上下键留给日志滚动 */
   async waitForAction(actions: PlayerAction[]): Promise<{ action: PlayerAction; amount?: number }> {
     const actionOrder = [PlayerAction.Fold, PlayerAction.Check, PlayerAction.Call, PlayerAction.Raise, PlayerAction.AllIn];
     const ordered = actionOrder.filter(a => actions.includes(a));
+    let selectedIdx = 0;
 
-    this.input.enableRawMode();
-    const size = getTerminalSize();
+    const reRender = () => {
+      this.overlayState = { type: 'action-panel', actions: ordered, selectedIndex: selectedIdx };
+      if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
+    };
+
+    // 自定义按键处理，只响应 left/right/数字/回车，up/down 留给持久化handler滚动日志
+    const waitForActionKey = (): Promise<'left' | 'right' | 'enter' | 'escape' | number> => {
+      return new Promise((resolve) => {
+        const handler = (key: import('./engine/input').KeyEvent) => {
+          if (key.name === 'return' || key.name === 'enter') {
+            cleanup();
+            resolve('enter');
+            return;
+          }
+          if (key.name === 'escape') {
+            cleanup();
+            resolve('escape');
+            return;
+          }
+          if (key.name === 'left') {
+            cleanup();
+            resolve('left');
+            return;
+          }
+          if (key.name === 'right') {
+            cleanup();
+            resolve('right');
+            return;
+          }
+          const num = parseInt(key.name, 10);
+          if (!isNaN(num) && num >= 0 && num <= ordered.length) {
+            cleanup();
+            resolve(num);
+            return;
+          }
+          // up/down 不处理，透传给持久化handler滚动日志
+        };
+
+        const cleanup = () => {
+          this.input.removeCallback(handler);
+        };
+
+        this.input.onKey(handler);
+      });
+    };
 
     try {
-      // 渲染动作面板
-      this.overlayState = { type: 'action-panel', actions: ordered };
-      const panelLines = renderActionPanel({ actions: ordered }, this.theme, size.width);
-      const panelStart = size.height - panelLines.length;
-      for (let i = 0; i < panelLines.length; i++) {
-        this.screen.setLine(panelStart + i, panelLines[i]);
-      }
-      this.screen.render();
+      reRender();
 
       while (true) {
-        const num = await this.input.waitForNumber(ordered.length);
-        if (num < 1 || num > ordered.length) continue;
+        const sel = await waitForActionKey();
 
-        const chosen = ordered[num - 1]; // waitForNumber returns 1-indexed
-
-        if (chosen === PlayerAction.Raise) {
-          // 清除动作面板区域，防止残留边框混入加注输入
-          this.clearBottomArea(panelStart, size.height);
-          this.screen.render();
-
-          const amount = await this.waitForRaiseAmount();
-          if (amount > 0) {
-            this.clearBottomArea(size.height - 6, size.height);
-            this.screen.render();
-            return { action: chosen, amount };
-          }
-          // 取消加注，重新渲染面板并恢复叠加状态
-          this.overlayState = { type: 'action-panel', actions: ordered };
-          const newPanel = renderActionPanel({ actions: ordered }, this.theme, size.width);
-          const newStart = size.height - newPanel.length;
-          for (let i = 0; i < newPanel.length; i++) {
-            this.screen.setLine(newStart + i, newPanel[i]);
-          }
-          this.screen.render();
+        if (sel === 'left') {
+          selectedIdx = (selectedIdx - 1 + ordered.length) % ordered.length;
+          reRender();
+          continue;
+        }
+        if (sel === 'right') {
+          selectedIdx = (selectedIdx + 1) % ordered.length;
+          reRender();
           continue;
         }
 
-        // 非加注动作：清除面板区域再返回
-        this.clearBottomArea(panelStart, size.height);
-        this.screen.render();
-        return { action: chosen };
+        if (typeof sel === 'number') {
+          if (sel >= 1 && sel <= ordered.length) {
+            selectedIdx = sel - 1;
+            reRender();
+          }
+          continue;
+        }
+
+        if (sel === 'enter') {
+          const chosen = ordered[selectedIdx];
+
+          if (chosen === PlayerAction.Raise) {
+            const amount = await this.waitForRaiseAmount();
+            if (amount > 0) {
+              this.overlayState = { type: 'none' };
+              return { action: chosen, amount };
+            }
+            reRender();
+            continue;
+          }
+
+          this.overlayState = { type: 'none' };
+          return { action: chosen };
+        }
+
+        // sel === 'escape' — 忽略，继续等待
       }
     } finally {
       this.overlayState = { type: 'none' };
-      this.input.disableRawMode();
     }
   }
 
   /** 等待加注金额输入 */
   private async waitForRaiseAmount(): Promise<number> {
     let text = '';
-    const size = getTerminalSize();
 
-    const render = (currentText: string) => {
-      const lines = renderRaiseInput(currentText, this.theme, size.width);
-      const start = size.height - lines.length;
-      for (let i = 0; i < lines.length; i++) {
-        this.screen.setLine(start + i, lines[i]);
-      }
-      this.screen.render();
+    const reRender = () => {
+      if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
     };
 
     this.overlayState = { type: 'raise-input', text: '' };
-    render(text);
+    reRender();
 
     const result = await this.input.readString(text, 10, (newText: string) => {
       text = newText;
       this.overlayState = { type: 'raise-input', text: newText };
-      render(text);
+      reRender();
     });
 
     if (result.cancelled || result.text.length === 0) {
@@ -409,19 +521,15 @@ export class GameUI {
       });
     }
 
-    this.input.enableRawMode();
+    let handler: ((key: import('./engine/input').KeyEvent) => void) | null = null;
     try {
       this.overlayState = { type: 'enter-or-zero', message };
-      const size = getTerminalSize();
-      const msg = message || '按 Enter 继续，或按 0 结束...';
-      const line = centerAnsi(themed(msg, this.theme.dim), size.width);
-      this.screen.setLine(size.height - 1, line);
-      this.screen.render();
+      if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
 
-      return new Promise((resolve) => {
-        const handler = (key: import('./engine/input').KeyEvent) => {
+      return await new Promise((resolve) => {
+        handler = (key: import('./engine/input').KeyEvent) => {
           if (key.ctrl && key.name === 'c') {
-            resolve(true); // Ctrl+C = end game
+            resolve(true);
             return;
           }
           if (key.name === 'return' || key.name === 'enter') {
@@ -435,15 +543,14 @@ export class GameUI {
         this.input.onKey(handler);
       });
     } finally {
+      if (handler) this.input.removeCallback(handler);
       this.overlayState = { type: 'none' };
-      this.input.disableRawMode();
     }
   }
 
   /** 等待回车 */
   async waitForEnter(message?: string): Promise<void> {
     if (this.fallbackMode) {
-      // Use readline for fallback
       const rl = await import('readline');
       const iface = rl.createInterface({ input: process.stdin, output: process.stdout });
       return new Promise(resolve => {
@@ -454,26 +561,13 @@ export class GameUI {
       });
     }
 
-    this.input.enableRawMode();
     try {
       this.overlayState = { type: 'enter-prompt', message };
-      const size = getTerminalSize();
-      const msg = message || '按 Enter 键继续...';
-      const line = centerAnsi(themed(msg, this.theme.dim), size.width);
-      this.screen.setLine(size.height - 1, line);
-      this.screen.render();
+      if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
 
       await this.input.waitForEnter();
     } finally {
       this.overlayState = { type: 'none' };
-      this.input.disableRawMode();
-    }
-  }
-
-  /** 清除屏幕底部指定区域(用于移除叠加UI) */
-  private clearBottomArea(fromRow: number, toRow: number): void {
-    for (let i = fromRow; i < toRow; i++) {
-      this.screen.setLine(i, '');
     }
   }
 

@@ -340,13 +340,19 @@ export function executeAction(state: GameState, action: PlayerAction, amount?: n
       break;
   }
 
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
+
   state.actionLog.push({
     handNumber: state.handNumber,
     phase: state.currentPhase,
     playerId: player.id,
     playerName: player.name,
     action,
-    amount
+    amount,
+    time: `{${h}:${m}:${s}}`
   });
 
   player.hasActed = true;

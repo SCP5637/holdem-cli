@@ -75,6 +75,7 @@ export interface ActionRecord {
   playerName: string;
   action: PlayerAction;
   amount?: number;
+  time: string;
 }
 
 /**
