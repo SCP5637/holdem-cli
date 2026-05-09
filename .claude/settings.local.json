@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed -i '1034d' src/ui/inputHandler.ts)",
+      "Bash(sed -n '1032,1036p' src/ui/inputHandler.ts)"
+    ]
+  }
+}

@@ -43,9 +43,9 @@ export class GameUI {
   private lastShowAllCards = false;
   private overlayState: OverlayState = { type: 'none' };
 
-  constructor() {
-    this.screen = new Screen();
-    this.input = new InputHandler();
+  constructor(screen?: Screen, input?: InputHandler) {
+    this.screen = screen ?? new Screen();
+    this.input = input ?? new InputHandler();
     this.theme = defaultTheme;
     this.fallbackMode = !isTTY();
   }

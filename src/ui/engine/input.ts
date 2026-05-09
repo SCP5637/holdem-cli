@@ -59,6 +59,12 @@ export class InputHandler {
     this.keyCallbacks.push(cb);
   }
 
+  /** 移除指定按键监听 */
+  removeCallback(cb: KeyCallback): void {
+    const idx = this.keyCallbacks.indexOf(cb);
+    if (idx >= 0) this.keyCallbacks.splice(idx, 1);
+  }
+
   /** 移除所有按键监听 */
   removeAllListeners(): void {
     this.keyCallbacks = [];
@@ -101,6 +107,50 @@ export class InputHandler {
         if (key.name === 'return' || key.name === 'enter') {
           cleanup();
           resolve();
+        }
+      };
+
+      const cleanup = () => {
+        const idx = this.keyCallbacks.indexOf(handler);
+        if (idx >= 0) this.keyCallbacks.splice(idx, 1);
+      };
+
+      this.keyCallbacks.push(handler);
+    });
+  }
+
+  /**
+   * 菜单选择原语: 同时监听数字键(1..max)、方向键(up/down)、Enter、Esc
+   * 返回 { type, value } — number类型时value为1-indexed数字，arrow类型时value为-1(up)或+1(down)
+   */
+  waitForSelection(max: number): Promise<{ type: 'number' | 'arrow' | 'enter' | 'escape'; value: number }> {
+    return new Promise((resolve) => {
+      const handler = (key: KeyEvent) => {
+        if (key.name === 'return' || key.name === 'enter') {
+          cleanup();
+          resolve({ type: 'enter', value: 0 });
+          return;
+        }
+        if (key.name === 'escape') {
+          cleanup();
+          resolve({ type: 'escape', value: 0 });
+          return;
+        }
+        if (key.name === 'up') {
+          cleanup();
+          resolve({ type: 'arrow', value: -1 });
+          return;
+        }
+        if (key.name === 'down') {
+          cleanup();
+          resolve({ type: 'arrow', value: 1 });
+          return;
+        }
+        const num = parseInt(key.name, 10);
+        if (!isNaN(num) && num >= 0 && num <= max) {
+          cleanup();
+          resolve({ type: 'number', value: num });
+          return;
         }
       };
 
@@ -160,10 +210,13 @@ export class InputHandler {
           return;
         }
 
-        // 数字键
-        if (key.name >= '0' && key.name <= '9' && text.length < maxLen) {
-          text += key.name;
-          if (onChange) onChange(text);
+        // 可打印字符 (字母、数字、常见符号)
+        if (text.length < maxLen && key.name.length === 1) {
+          const ch = key.name.charCodeAt(0);
+          if (ch >= 0x20 && ch < 0x7f) {
+            text += key.name;
+            if (onChange) onChange(text);
+          }
         }
       };
 
@@ -198,7 +251,15 @@ export class InputHandler {
       if (buf.length === 1) {
         return { name: 'escape', sequence: '\x1b', ctrl: false, meta: false, shift: false };
       }
-      // 跳过方向键等转义序列(如 \x1b[A)
+      // Arrow keys: \x1b[A (up), \x1b[B (down), \x1b[C (right), \x1b[D (left)
+      if (buf.length === 3 && buf[1] === 0x5b) {
+        switch (buf[2]) {
+          case 0x41: return { name: 'up', sequence: '\x1b[A', ctrl: false, meta: false, shift: false };
+          case 0x42: return { name: 'down', sequence: '\x1b[B', ctrl: false, meta: false, shift: false };
+          case 0x43: return { name: 'right', sequence: '\x1b[C', ctrl: false, meta: false, shift: false };
+          case 0x44: return { name: 'left', sequence: '\x1b[D', ctrl: false, meta: false, shift: false };
+        }
+      }
       return null;
     }
 

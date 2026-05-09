@@ -1,6 +1,6 @@
 /**
  * 输入处理模块
- * 管理命令行的异步用户输入和验证
+ * TUI模式: 使用MenuUI全屏组件; 降级模式: 使用readline
  */
 
 import * as readline from 'readline';
@@ -8,11 +8,300 @@ import { AIDifficulty } from '../types/game';
 import { LLMAssignment, LLMPreset } from '../types/llm';
 import { loadLLMPresets, upsertLLMPreset, deleteLLMPreset } from '../core/llmPresetStore';
 import { RunMode, SeatConfig, SeatType, HostConfig, ClientConfig } from '../types/network';
+import { getMenuContext } from './menu/menuUI';
+import {
+  renderTitle, renderSelectionList, renderStatusBar,
+  renderTextBox, renderNumberInput, renderYesNo,
+  renderInfoBox, renderDescribedList, renderQuickActions
+} from './menu/components';
+import { getTerminalSize } from './terminal';
 
-/**
- * 创建 readline 接口用于用户输入
- * @returns 配置好的 readline 接口
- */
+// ============ TUI 核心交互 ============
+
+async function tuiSelect(title: string, options: string[], initial: number = 0): Promise<number | null> {
+  const ctx = getMenuContext()!;
+  const { screen, input, theme } = ctx;
+  let selected = initial;
+
+  const render = () => {
+    const size = getTerminalSize();
+    const lines: string[] = [];
+    lines.push(...renderTitle(title, theme, size.width));
+    lines.push(...renderSelectionList(options, selected, theme, size.width));
+    lines.push('');
+    lines.push(renderStatusBar('↑↓ 导航  数字键  Enter 确认  Esc 返回', theme, size.width));
+    for (let i = 0; i < lines.length; i++) {
+      screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      screen.setLine(i, '');
+    }
+    screen.render();
+  };
+
+  ctx.setRender(render);
+  render();
+
+  let result: number | null = null;
+  try {
+    while (true) {
+      const evt = await input.waitForSelection(options.length);
+      if (evt.type === 'arrow') {
+        selected = (selected + evt.value + options.length) % options.length;
+        // 跳过分隔线
+        const opt = options[selected];
+        if (opt === '---' || opt === '') {
+          selected = (selected + evt.value + options.length) % options.length;
+        }
+        const opt2 = options[selected];
+        if (opt2 === '---' || opt2 === '') {
+          selected = (selected + 1) % options.length;
+        }
+        render();
+      } else if (evt.type === 'number') {
+        const idx = evt.value - 1;
+        if (idx >= 0 && idx < options.length && options[idx] !== '---' && options[idx] !== '') {
+          result = idx;
+          break;
+        }
+      } else if (evt.type === 'enter') {
+        const opt = options[selected];
+        if (opt !== '---' && opt !== '') {
+          result = selected;
+          break;
+        }
+      } else if (evt.type === 'escape') {
+        result = null;
+        break;
+      }
+    }
+  } finally {
+    ctx.setRender(null);
+  }
+  return result;
+}
+
+async function tuiDescribedSelect(
+  title: string,
+  options: { label: string; desc: string }[],
+  initial: number = 0
+): Promise<number | null> {
+  const ctx = getMenuContext()!;
+  const { screen, input, theme } = ctx;
+  let selected = initial;
+
+  const render = () => {
+    const size = getTerminalSize();
+    const lines: string[] = [];
+    lines.push('');
+    lines.push(...renderTitle(title, theme, size.width));
+    lines.push(...renderDescribedList(options, selected, theme, size.width));
+    lines.push('');
+    lines.push(renderStatusBar('↑↓ 导航  数字键  Enter 确认  Esc 返回', theme, size.width));
+    for (let i = 0; i < lines.length; i++) {
+      screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      screen.setLine(i, '');
+    }
+    screen.render();
+  };
+
+  ctx.setRender(render);
+  render();
+
+  let result: number | null = null;
+  try {
+    while (true) {
+      const evt = await input.waitForSelection(options.length);
+      if (evt.type === 'arrow') {
+        selected = (selected + evt.value + options.length) % options.length;
+        render();
+      } else if (evt.type === 'number') {
+        const idx = evt.value - 1;
+        if (idx >= 0 && idx < options.length) { result = idx; break; }
+      } else if (evt.type === 'enter') {
+        result = selected; break;
+      } else if (evt.type === 'escape') {
+        result = null; break;
+      }
+    }
+  } finally {
+    ctx.setRender(null);
+  }
+  return result;
+}
+
+async function tuiTextInput(prompt: string, defaultValue: string = ''): Promise<string | null> {
+  const ctx = getMenuContext()!;
+  const { screen, input, theme } = ctx;
+  let text = defaultValue;
+
+  const render = () => {
+    const size = getTerminalSize();
+    const lines: string[] = [];
+    lines.push(...renderTextBox(prompt, text, theme, size.width));
+    for (let i = 0; i < lines.length; i++) {
+      screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      screen.setLine(i, '');
+    }
+    screen.render();
+  };
+
+  ctx.setRender(render);
+  render();
+
+  try {
+    return await new Promise((resolve) => {
+      input.readString(text, 200, (newText: string) => {
+        text = newText;
+        render();
+      }).then((result) => {
+        if (result.cancelled) {
+          resolve(null);
+        } else {
+          resolve(result.text || null);
+        }
+      });
+    });
+  } finally {
+    ctx.setRender(null);
+  }
+}
+
+async function tuiNumberInput(
+  prompt: string,
+  min: number,
+  max: number,
+  defaultValue?: number
+): Promise<number | null> {
+  const ctx = getMenuContext()!;
+  const { screen, input, theme } = ctx;
+  let text = String(defaultValue !== undefined ? defaultValue : min);
+
+  const render = () => {
+    const size = getTerminalSize();
+    const lines: string[] = [];
+    lines.push(...renderNumberInput(prompt, text, min, max, theme, size.width));
+    for (let i = 0; i < lines.length; i++) {
+      screen.setLine(i, lines[i]);
+    }
+    // 清空残留行
+    for (let i = lines.length; i < size.height; i++) {
+      screen.setLine(i, '');
+    }
+    screen.render();
+  };
+
+  ctx.setRender(render);
+  render();
+
+  return new Promise((resolve) => {
+    const handler = (key: import('./engine/input').KeyEvent) => {
+      if (key.name === 'return' || key.name === 'enter') {
+        const num = parseInt(text, 10);
+        if (!isNaN(num) && num >= min && num <= max) {
+          cleanup();
+          resolve(num);
+        }
+        // Invalid: ignore, stay on current value
+      } else if (key.name === 'escape') {
+        cleanup();
+        resolve(null);
+      } else if (key.name === 'up') {
+        let val = parseInt(text, 10) || 0;
+        val = Math.min(max, val + 1);
+        text = String(val);
+        render();
+      } else if (key.name === 'down') {
+        let val = parseInt(text, 10) || 0;
+        val = Math.max(min, val - 1);
+        text = String(val);
+        render();
+      } else if (key.name === 'backspace') {
+        if (text.length > 0) {
+          text = text.slice(0, -1);
+          render();
+        }
+      } else if (key.name.length === 1) {
+        const ch = key.name.charCodeAt(0);
+        if (ch >= 0x30 && ch <= 0x39 && text.length < 10) {
+          text += key.name;
+          render();
+        }
+      }
+    };
+
+    const cleanup = () => {
+      input.removeCallback(handler);
+      ctx.setRender(null);
+    };
+
+    input.onKey(handler);
+  });
+}
+
+async function tuiYesNo(prompt: string, defaultValue: boolean): Promise<boolean | null> {
+  const ctx = getMenuContext()!;
+  const { screen, input, theme } = ctx;
+  let selectedYes = defaultValue;
+
+  const render = () => {
+    const size = getTerminalSize();
+    const lines: string[] = [];
+    lines.push(...renderYesNo(prompt, selectedYes, theme, size.width));
+    for (let i = 0; i < lines.length; i++) {
+      screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      screen.setLine(i, '');
+    }
+    screen.render();
+  };
+
+  ctx.setRender(render);
+  render();
+
+  let result: boolean | null = null;
+  try {
+    while (true) {
+      const evt = await input.waitForSelection(0);
+      if (evt.type === 'arrow') {
+        if (evt.value === -1 || evt.value === 1) selectedYes = !selectedYes;
+        render();
+      } else if (evt.type === 'enter') {
+        result = selectedYes; break;
+      } else if (evt.type === 'escape') {
+        result = null; break;
+      }
+    }
+  } finally {
+    ctx.setRender(null);
+  }
+  return result;
+}
+
+function tuiShowMessage(msg: string): void {
+  const ctx = getMenuContext();
+  if (!ctx) return;
+  const { screen, theme } = ctx;
+  const size = getTerminalSize();
+  const line = renderStatusBar(msg, theme, size.width);
+  // Find a free row
+  screen.setLine(size.height - 1, line);
+  screen.render();
+}
+
+function tuiClear(): void {
+  const ctx = getMenuContext();
+  if (!ctx) return;
+  ctx.screen.reset();
+}
+
+// ============ Readline 降级辅助 ============
+
 function createInterface(): readline.Interface {
   return readline.createInterface({
     input: process.stdin,
@@ -20,14 +309,8 @@ function createInterface(): readline.Interface {
   });
 }
 
-/**
- * 提示用户输入并返回响应
- * @param question - 显示的提示文本
- * @returns 解析为用户输入的 Promise
- */
-export async function getInput(question: string): Promise<string> {
+async function rlInput(question: string): Promise<string> {
   const rl = createInterface();
-
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       rl.close();
@@ -36,69 +319,143 @@ export async function getInput(question: string): Promise<string> {
   });
 }
 
-/**
- * 提示用户选择数字选项
- * @param question - 显示的提示文本
- * @param min - 最小有效值
- * @param max - 最大有效值
- * @param defaultValue - 默认值（可选）
- * @returns 解析为所选数字的 Promise
- */
-export async function getNumberInput(question: string, min: number, max: number, defaultValue?: number): Promise<number> {
+async function rlNumberInput(question: string, min: number, max: number, defaultValue?: number): Promise<number> {
   while (true) {
     const defaultHint = defaultValue !== undefined ? ` (默认: ${defaultValue})` : '';
-    const input = await getInput(question + defaultHint);
-
-    // 如果输入为空且有默认值，返回默认值
-    if (input.trim() === '' && defaultValue !== undefined) {
-      return defaultValue;
-    }
-
+    const input = await rlInput(question + defaultHint);
+    if (input === '' && defaultValue !== undefined) return defaultValue;
     const num = parseInt(input, 10);
-
-    if (!isNaN(num) && num >= min && num <= max) {
-      return num;
-    }
-
+    if (!isNaN(num) && num >= min && num <= max) return num;
     console.log(`输入无效。请输入 ${min} 到 ${max} 之间的数字。`);
   }
 }
 
-/**
- * 提示用户输入初始游戏配置
- * @returns 解析为玩家数量、人类玩家位置、初始筹码和盲注的 Promise
- */
-export async function getGameConfig(): Promise<{ numPlayers: number; humanPosition: number; startingChips: number; smallBlind: number; bigBlind: number; llmAssignments: LLMAssignment[]; aiDifficulties: Map<number, AIDifficulty> }> {
+async function rlRequiredInput(question: string, defaultValue?: string): Promise<string> {
+  while (true) {
+    const prompt = defaultValue ? `${question.replace(/: $/, '')} (${defaultValue}): ` : question;
+    const input = await rlInput(prompt);
+    const value = input.trim() || defaultValue;
+    if (value && value.length > 0) return value;
+    console.log('输入不能为空。');
+  }
+}
+
+async function rlYesNo(question: string, defaultValue: boolean): Promise<boolean> {
+  while (true) {
+    const input = (await rlInput(question)).toLowerCase();
+    if (input === '') return defaultValue;
+    if (input === 'y' || input === 'yes') return true;
+    if (input === 'n' || input === 'no') return false;
+    console.log('请输入 y 或 n。');
+  }
+}
+
+function isTUI(): boolean {
+  return getMenuContext() !== null;
+}
+
+// ============ 公开API ============
+
+export async function getInput(question: string): Promise<string> {
+  if (isTUI()) {
+    const result = await tuiTextInput(question, '');
+    return result ?? '';
+  }
+  return rlInput(question);
+}
+
+export async function getNumberInput(question: string, min: number, max: number, defaultValue?: number): Promise<number> {
+  if (isTUI()) {
+    while (true) {
+      const result = await tuiNumberInput(question, min, max, defaultValue);
+      if (result !== null) return result;
+      // Esc pressed, but caller loops - just continue
+    }
+  }
+  return rlNumberInput(question, min, max, defaultValue);
+}
+
+export async function getGameConfig(): Promise<{
+  numPlayers: number;
+  humanPosition: number;
+  startingChips: number;
+  smallBlind: number;
+  bigBlind: number;
+  llmAssignments: LLMAssignment[];
+  aiDifficulties: Map<number, AIDifficulty>;
+}> {
+  if (isTUI()) {
+    const numPlayers = await tuiWizardNumber('玩家数量', 2, 8, undefined);
+    if (numPlayers === null) throw new Error('配置取消');
+
+    const humanPosition = await tuiWizardNumber(`你的座位 (1-${numPlayers})`, 1, numPlayers, undefined);
+    if (humanPosition === null) throw new Error('配置取消');
+
+    const startingChips = await tuiWizardNumber('初始筹码', 100, 100000, 1000);
+    if (startingChips === null) throw new Error('配置取消');
+
+    const smallBlind = await tuiWizardNumber('小盲注金额', 1, 10000, 10);
+    if (smallBlind === null) throw new Error('配置取消');
+
+    const bigBlind = smallBlind * 2;
+
+    const presets = await loadLLMPresets();
+    const { llmAssignments, aiDifficulties } = await tuiConfigureOpponents(numPlayers, humanPosition - 1, presets);
+
+    return {
+      numPlayers,
+      humanPosition: humanPosition - 1,
+      startingChips,
+      smallBlind,
+      bigBlind,
+      llmAssignments,
+      aiDifficulties
+    };
+  }
+
+  // Fallback
   console.log('\n=== 本地游戏配置 ===\n');
-
   const presets = await loadLLMPresets();
-  const numPlayers = await getNumberInput('输入玩家数量 (2-8): ', 2, 8);
-  const humanPosition = await getNumberInput(`输入你的座位位置 (1-${numPlayers}): `, 1, numPlayers);
-
+  const numPlayers = await rlNumberInput('输入玩家数量 (2-8): ', 2, 8);
+  const humanPosition = await rlNumberInput(`输入你的座位位置 (1-${numPlayers}): `, 1, numPlayers);
   console.log('\n--- 筹码与盲注设置 ---');
-  const startingChips = await getNumberInput('输入初始筹码数 (100-100000, 默认: 1000): ', 100, 100000, 1000);
-  const smallBlind = await getNumberInput('输入小盲注金额 (1-10000, 默认: 10): ', 1, 10000, 10);
+  const startingChips = await rlNumberInput('输入初始筹码数 (100-100000, 默认: 1000): ', 100, 100000, 1000);
+  const smallBlind = await rlNumberInput('输入小盲注金额 (1-10000, 默认: 10): ', 1, 10000, 10);
   const bigBlind = smallBlind * 2;
-
-  const { llmAssignments, aiDifficulties } = await configureOpponents(numPlayers, humanPosition - 1, presets);
-
+  const { llmAssignments, aiDifficulties } = await rlConfigureOpponents(numPlayers, humanPosition - 1, presets);
   return { numPlayers, humanPosition: humanPosition - 1, startingChips, smallBlind, bigBlind, llmAssignments, aiDifficulties };
 }
 
-/**
- * 选择运行模式
- * @returns 运行模式或 null（退出）
- */
 export async function selectRunMode(): Promise<RunMode | null> {
+  if (isTUI()) {
+    const OPTIONS = ['本地游戏', '创建联机房间 (主机)', '加入联机房间 (客户端)', '---', '管理 LLM API 预设', '退出'];
+    // LLM预设管理可能递归调用 selectRunMode
+    while (true) {
+      const idx = await tuiSelect('德州扑克', OPTIONS, 0);
+      if (idx === null) return null; // Esc → 退出
+      switch (idx) {
+        case 0: return RunMode.Local;
+        case 1: return RunMode.Host;
+        case 2: return RunMode.Client;
+        case 4:
+          await configureLLMPresets();
+          // 返回后重新显示主菜单
+          tuiClear();
+          break;
+        case 5: return null;
+        default: break;
+      }
+    }
+  }
+
+  // Fallback
   console.log('\n————====+ 德州扑克 +====————\n');
   console.log('  1. 本地游戏');
   console.log('  2. 创建联机房间 (主机)');
   console.log('  3. 加入联机房间 (客户端)');
   console.log('  8. 管理 LLM API 预设');
   console.log('  0. 退出');
-
-  const choice = await getNumberInput('输入指令: ', 0, 8);
-
+  const choice = await rlNumberInput('输入指令: ', 0, 8);
   switch (choice) {
     case 0: return null;
     case 1: return RunMode.Local;
@@ -106,465 +463,658 @@ export async function selectRunMode(): Promise<RunMode | null> {
     case 3: return RunMode.Client;
     case 8:
       await configureLLMPresets();
-      return selectRunMode(); // 递归调用重新显示菜单
+      return selectRunMode();
     default: return RunMode.Local;
   }
 }
 
-/**
- * 配置主机模式
- * @returns 主机配置
- */
 export async function configureHost(): Promise<HostConfig> {
+  if (isTUI()) {
+    const numPlayers = await tuiWizardNumber('玩家数量', 2, 8, undefined);
+    if (numPlayers === null) throw new Error('配置取消');
+
+    const hostSeatIndex = await tuiWizardNumber(`你的座位 (1-${numPlayers})`, 1, numPlayers, undefined);
+    if (hostSeatIndex === null) throw new Error('配置取消');
+
+    const port = await tuiWizardNumber('监听端口', 1024, 65535, 15637);
+    if (port === null) throw new Error('配置取消');
+
+    const startingChips = await tuiWizardNumber('初始筹码', 100, 100000, 1000);
+    if (startingChips === null) throw new Error('配置取消');
+
+    const smallBlind = await tuiWizardNumber('小盲注金额', 1, 10000, 10);
+    if (smallBlind === null) throw new Error('配置取消');
+
+    const bigBlind = smallBlind * 2;
+
+    const presets = await loadLLMPresets();
+    const seats: SeatConfig[] = [];
+    for (let i = 0; i < numPlayers; i++) {
+      if (i === hostSeatIndex - 1) {
+        seats.push({ index: i, type: SeatType.Host, name: 'Host', isOccupied: true });
+      } else {
+        const seat = await tuiConfigureSeat(i, presets);
+        if (!seat) throw new Error('配置取消');
+        seats.push(seat);
+      }
+    }
+
+    return {
+      numPlayers,
+      hostSeatIndex: hostSeatIndex - 1,
+      port,
+      seats,
+      startingChips,
+      smallBlind,
+      bigBlind
+    };
+  }
+
+  // Fallback
   console.log('\n--- 创建联机房间 ---\n');
-
   const presets = await loadLLMPresets();
-  const numPlayers = await getNumberInput('输入玩家数量 (2-8): ', 2, 8);
-  const hostSeatIndex = await getNumberInput(`选择你的座位 (1-${numPlayers}): `, 1, numPlayers) - 1;
-  const port = await getNumberInput('输入监听端口 (1024-65535): ', 1024, 65535, 15637);
-
+  const numPlayers = await rlNumberInput('输入玩家数量 (2-8): ', 2, 8);
+  const hostSeatIndex = await rlNumberInput(`选择你的座位 (1-${numPlayers}): `, 1, numPlayers) - 1;
+  const port = await rlNumberInput('输入监听端口 (1024-65535): ', 1024, 65535, 15637);
   console.log('\n--- 筹码与盲注设置 ---');
-  const startingChips = await getNumberInput('输入初始筹码数 (100-100000, 默认: 1000): ', 100, 100000, 1000);
-  const smallBlind = await getNumberInput('输入小盲注金额 (1-10000, 默认: 10): ', 1, 10000, 10);
+  const startingChips = await rlNumberInput('输入初始筹码数 (100-100000, 默认: 1000): ', 100, 100000, 1000);
+  const smallBlind = await rlNumberInput('输入小盲注金额 (1-10000, 默认: 10): ', 1, 10000, 10);
   const bigBlind = smallBlind * 2;
-
-  // 配置座位
   const seats: SeatConfig[] = [];
   for (let i = 0; i < numPlayers; i++) {
     if (i === hostSeatIndex) {
-      seats.push({
-        index: i,
-        type: SeatType.Host,
-        name: 'Host',
-        isOccupied: true
-      });
+      seats.push({ index: i, type: SeatType.Host, name: 'Host', isOccupied: true });
     } else {
-      seats.push(await configureSeat(i, presets));
+      seats.push(await rlConfigureSeat(i, presets));
     }
   }
-
-  return {
-    numPlayers,
-    hostSeatIndex,
-    port,
-    seats,
-    startingChips,
-    smallBlind,
-    bigBlind
-  };
+  return { numPlayers, hostSeatIndex, port, seats, startingChips, smallBlind, bigBlind };
 }
 
-/**
- * 配置单个座位
- */
-async function configureSeat(seatIndex: number, presets: LLMPreset[]): Promise<SeatConfig> {
-  console.log(`\n配置 ${seatIndex + 1} 号位:`);
-  console.log('  1. AI 玩家');
-  console.log('  2. LLM 玩家');
-  console.log('  3. 预留 (远程玩家)');
-
-  const choice = await getNumberInput('选择类型: ', 1, 3);
-
-  switch (choice) {
-    case 1: {
-      const difficulty = await selectDifficulty();
-      const name = `Player ${seatIndex + 1}`;
-      return {
-        index: seatIndex,
-        type: SeatType.AI,
-        name,
-        isOccupied: true,
-        aiDifficulty: difficulty
-      };
-    }
-    case 2: {
-      const name = await getRequiredInput('输入 LLM 玩家名称: ', `LLM ${seatIndex + 1}`);
-      return {
-        index: seatIndex,
-        type: SeatType.LLM,
-        name,
-        isOccupied: true
-      };
-    }
-    case 3: {
-      const defaultName = `Player${seatIndex + 1}`;
-      const name = await getRequiredInput(`输入预留座位名称 (默认: ${defaultName}): `, defaultName);
-      return {
-        index: seatIndex,
-        type: SeatType.Remote,
-        name,
-        isOccupied: false
-      };
-    }
-    default: {
-      return {
-        index: seatIndex,
-        type: SeatType.AI,
-        name: `Player ${seatIndex + 1}`,
-        isOccupied: true
-      };
-    }
-  }
-}
-
-/**
- * 配置客户端模式
- * @returns 客户端配置
- */
 export async function configureClient(): Promise<ClientConfig & { seatIndex: number; playerName: string }> {
+  if (isTUI()) {
+    const host = await tuiTextInput('主机 IP 地址', '');
+    if (!host) throw new Error('配置取消');
+
+    const port = await tuiWizardNumber('主机端口', 1, 65535, undefined);
+    if (port === null) throw new Error('配置取消');
+
+    return { host, port, seatIndex: -1, playerName: '' };
+  }
+
+  // Fallback
   console.log('\n--- 加入联机房间 ---\n');
-
-  const host = await getRequiredInput('输入主机 IP 地址: ');
-  const port = await getNumberInput('输入主机端口: ', 1, 65535);
-
-  return {
-    host,
-    port,
-    seatIndex: -1, // 连接后选择
-    playerName: '' // 连接后输入
-  };
+  const host = await rlRequiredInput('输入主机 IP 地址: ');
+  const port = await rlNumberInput('输入主机端口: ', 1, 65535);
+  return { host, port, seatIndex: -1, playerName: '' };
 }
 
-/**
- * 选择座位并输入名称（客户端）
- * @param availableSeats 可用座位列表
- * @returns 选择的座位和名称
- */
 export async function selectSeatAndName(availableSeats: SeatConfig[]): Promise<{ seatIndex: number; playerName: string }> {
+  if (isTUI()) {
+    const options = availableSeats.map(s => `${s.index + 1}号位 - ${s.name}`);
+    const idx = await tuiSelect('选择座位', options, 0);
+    if (idx === null) throw new Error('选择取消');
+    const seat = availableSeats[idx];
+    const name = await tuiTextInput('输入你的名称', seat.name);
+    if (!name) throw new Error('输入取消');
+    return { seatIndex: seat.index, playerName: name };
+  }
+
+  // Fallback
   console.log('\n可用座位:');
   availableSeats.forEach((seat, idx) => {
     console.log(`  ${idx + 1}. ${seat.index + 1}号位 - ${seat.name}`);
   });
-
-  const choice = await getNumberInput('选择座位: ', 1, availableSeats.length);
-  const selectedSeat = availableSeats[choice - 1];
-
-  const defaultName = selectedSeat.name;
-  const playerName = await getRequiredInput(`输入你的名称 (默认: ${defaultName}): `, defaultName);
-
-  return {
-    seatIndex: selectedSeat.index,
-    playerName
-  };
+  const choice = await rlNumberInput('选择座位: ', 1, availableSeats.length);
+  const seat = availableSeats[choice - 1];
+  const playerName = await rlRequiredInput(`输入你的名称 (默认: ${seat.name}): `, seat.name);
+  return { seatIndex: seat.index, playerName };
 }
 
-async function configureLLMPresets(): Promise<LLMPreset[]> {
-  let presets = await loadLLMPresets();
-
-  console.log(`已加载 ${presets.length} 个 LLM API 预设。`);
-  const shouldManage = await getYesNoInput('是否管理 LLM API 预设？(y/N): ', false);
-
-  if (!shouldManage) {
-    return presets;
+export async function waitForEnter(message: string = '按 Enter 键继续...'): Promise<void> {
+  if (isTUI()) {
+    const ctx = getMenuContext()!;
+    const { screen, input, theme } = ctx;
+    const size = getTerminalSize();
+    screen.setLine(size.height - 1, renderStatusBar(message, theme, size.width));
+    screen.render();
+    await input.waitForEnter();
+    return;
   }
-
-  while (true) {
-    renderPresetList(presets);
-    console.log('\n  --- 操作 ---');
-    console.log('  1. 新增预设');
-    console.log('  2. 覆盖预设');
-    console.log('  3. 删除预设');
-    console.log('  0. 完成');
-
-    const choice = await getNumberInput('选择操作: ', 0, 3);
-
-    if (choice === 0) {
-      return presets;
-    }
-
-    if (choice === 1) {
-      const preset = await getLLMPresetInput(presets, false);
-      presets = await upsertLLMPreset(preset);
-      console.log(`已新增预设: ${preset.name}`);
-    } else if (choice === 2) {
-      if (presets.length === 0) {
-        console.log('没有可覆盖的预设，请先新增预设。');
-        continue;
-      }
-      const presetIndex = await getNumberInput(`选择要覆盖的预设 (1-${presets.length}): `, 1, presets.length);
-      const existingPreset = presets[presetIndex - 1];
-      const preset = await getLLMPresetInput(presets, true, existingPreset);
-      presets = await upsertLLMPreset(preset);
-      console.log(`已覆盖预设: ${preset.name}`);
-    } else if (choice === 3) {
-      if (presets.length === 0) {
-        console.log('没有可删除的预设。');
-        continue;
-      }
-      const presetIndex = await getNumberInput(`选择要删除的预设 (1-${presets.length}): `, 1, presets.length);
-      const presetToDelete = presets[presetIndex - 1];
-      const confirmed = await getYesNoInput(`确认删除预设 "${presetToDelete.name}"? (y/N): `, false);
-      if (confirmed) {
-        presets = await deleteLLMPreset(presetToDelete.name);
-        console.log(`已删除预设: ${presetToDelete.name}`);
-      } else {
-        console.log('已取消删除。');
-      }
-    }
-  }
+  await rlInput(message);
 }
 
-async function getLLMPresetInput(
-  existingPresets: LLMPreset[],
-  isUpdate: boolean,
-  existingPreset?: LLMPreset
-): Promise<LLMPreset> {
-  const name = await getPresetNameInput(existingPresets, isUpdate, existingPreset?.name);
-  const baseUrl = await getBaseUrlInput(existingPreset?.baseUrl);
-  const apiKey = await getApiKeyInput(existingPreset?.apiKey);
-  const model = await getRequiredInput('模型名称，例如 gpt-4o-mini: ', existingPreset?.model);
-  const temperature = await getTemperatureInput(existingPreset?.temperature);
+// ============ 内部: TUI 向导辅助 ============
 
-  let customPrompt: string | undefined = existingPreset?.customPrompt;
-  const useCustomPrompt = await getYesNoInput('是否设定自定义提示词？(y/N): ', false);
-  if (useCustomPrompt) {
-    console.log('请输入自定义提示词（多行输入，输入空行结束）：');
-    customPrompt = await getMultilineInput();
-  }
-
-  return {
-    name,
-    baseUrl,
-    apiKey,
-    model,
-    temperature,
-    customPrompt
-  };
+async function tuiWizardNumber(prompt: string, min: number, max: number, defaultValue?: number): Promise<number | null> {
+  return tuiNumberInput(prompt, min, max, defaultValue);
 }
 
-async function getPresetNameInput(
-  existingPresets: LLMPreset[],
-  isUpdate: boolean,
-  defaultValue?: string
-): Promise<string> {
-  while (true) {
-    const prompt = defaultValue ? `预设名称 (${defaultValue}): ` : '预设名称: ';
-    const input = await getInput(prompt);
-    const name = input.trim() || defaultValue;
-
-    if (!name) {
-      console.log('预设名称不能为空。');
-      continue;
-    }
-
-    const exists = existingPresets.some(p => p.name === name);
-
-    if (isUpdate) {
-      if (!exists) {
-        console.log('该预设名称不存在，无法覆盖。');
-        continue;
-      }
-    } else {
-      if (exists) {
-        console.log('该预设名称已存在，请使用其他名称或选择覆盖操作。');
-        continue;
-      }
-    }
-
-    return name;
-  }
+async function tuiWizardText(prompt: string, defaultValue?: string): Promise<string | null> {
+  return tuiTextInput(prompt, defaultValue ?? '');
 }
 
-async function getBaseUrlInput(defaultValue?: string): Promise<string> {
-  while (true) {
-    const prompt = defaultValue
-      ? `OpenAI 兼容 API Base URL (${defaultValue}): `
-      : 'OpenAI 兼容 API Base URL，例如 https://api.openai.com/v1: ';
-    const input = await getInput(prompt);
-    const baseUrl = input.trim() || defaultValue;
+// ============ 内部: 对手配置 (TUI) ============
 
-    if (!baseUrl) {
-      console.log('Base URL 不能为空。');
-      continue;
-    }
-
-    if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-      console.log('Base URL 必须以 http:// 或 https:// 开头。');
-      continue;
-    }
-
-    try {
-      new URL(baseUrl);
-    } catch {
-      console.log('Base URL 格式无效，请输入有效的 URL。');
-      continue;
-    }
-
-    return baseUrl;
-  }
-}
-
-async function getApiKeyInput(defaultValue?: string): Promise<string> {
-  while (true) {
-    const prompt = defaultValue ? `API Key (${maskApiKey(defaultValue)}): ` : 'API Key: ';
-    const input = await getInput(prompt);
-    const apiKey = input.trim() || defaultValue;
-
-    if (!apiKey) {
-      console.log('API Key 不能为空。');
-      continue;
-    }
-
-    if (apiKey.length < 8) {
-      console.log('API Key 长度过短，请检查输入。');
-      continue;
-    }
-
-    return apiKey;
-  }
-}
-
-function maskApiKey(apiKey: string): string {
-  if (apiKey.length <= 8) {
-    return '***';
-  }
-  return apiKey.slice(0, 4) + '...' + apiKey.slice(-4);
-}
-
-async function configureOpponents(numPlayers: number, humanPosition: number, presets: LLMPreset[]): Promise<{ llmAssignments: LLMAssignment[]; aiDifficulties: Map<number, AIDifficulty> }> {
+async function tuiConfigureOpponents(
+  numPlayers: number,
+  humanPosition: number,
+  presets: LLMPreset[]
+): Promise<{ llmAssignments: LLMAssignment[]; aiDifficulties: Map<number, AIDifficulty> }> {
   const llmAssignments: LLMAssignment[] = [];
   const aiDifficulties = new Map<number, AIDifficulty>();
 
   for (let i = 0; i < numPlayers; i++) {
-    if (i === humanPosition) {
-      continue;
+    if (i === humanPosition) continue;
+
+    const seatName = `座位 ${i + 1}`;
+
+    // Build options: 0=AI, 1..N=LLM presets
+    const options: string[] = ['普通 AI (选择难度)'];
+    for (const p of presets) {
+      options.push(`LLM: ${p.name} (${p.model})`);
     }
+
+    if (options.length === 1) {
+      // No LLM presets → just select difficulty
+      const diff = await tuiSelectDifficulty();
+      if (diff !== null) aiDifficulties.set(i, diff);
+      else aiDifficulties.set(i, AIDifficulty.Medium);
+    } else {
+      const choice = await tuiSelect(seatName, options, 0);
+      if (choice === null || choice === 0) {
+        // AI with difficulty
+        const diff = await tuiSelectDifficulty();
+        if (diff !== null) aiDifficulties.set(i, diff);
+        else aiDifficulties.set(i, AIDifficulty.Medium);
+      } else if (choice > 0) {
+        // LLM preset
+        llmAssignments.push({ playerIndex: i, presetName: presets[choice - 1].name });
+      }
+    }
+  }
+
+  return { llmAssignments, aiDifficulties };
+}
+
+async function tuiSelectDifficulty(): Promise<AIDifficulty | null> {
+  const options = [
+    { label: 'Low (初级)', desc: '被动保守，易击败' },
+    { label: 'Medium (中级)', desc: '基础扎实，偶有诈唬' },
+    { label: 'High (高级)', desc: '数学正确，权益驱动' },
+    { label: 'Ultra (超级)', desc: 'GTO平衡，对手建模' },
+    { label: 'Max (极限)', desc: '全技术融合，最强挑战' },
+  ];
+
+  const idx = await tuiDescribedSelect('AI 难度', options, 1);
+  if (idx === null) return null;
+  const difficulties = [AIDifficulty.Low, AIDifficulty.Medium, AIDifficulty.High, AIDifficulty.Ultra, AIDifficulty.Max];
+  return difficulties[idx];
+}
+
+async function tuiConfigureSeat(seatIndex: number, presets: LLMPreset[]): Promise<SeatConfig | null> {
+  const options = ['AI 玩家', 'LLM 玩家', '预留 (远程玩家)'];
+  const choice = await tuiSelect(`座位 ${seatIndex + 1} 类型`, options, 0);
+  if (choice === null) return null;
+
+  switch (choice) {
+    case 0: {
+      const diff = await tuiSelectDifficulty();
+      return {
+        index: seatIndex,
+        type: SeatType.AI,
+        name: `Player ${seatIndex + 1}`,
+        isOccupied: true,
+        aiDifficulty: diff ?? AIDifficulty.Medium
+      };
+    }
+    case 1: {
+      const name = await tuiWizardText('LLM 玩家名称', `LLM ${seatIndex + 1}`);
+      if (!name) return null;
+      return { index: seatIndex, type: SeatType.LLM, name, isOccupied: true };
+    }
+    case 2: {
+      const name = await tuiWizardText('预留座位名称', `Player${seatIndex + 1}`);
+      if (!name) return null;
+      return { index: seatIndex, type: SeatType.Remote, name, isOccupied: false };
+    }
+    default:
+      return null;
+  }
+}
+
+// ============ 内部: 对手配置 (Fallback) ============
+
+async function rlConfigureOpponents(
+  numPlayers: number,
+  humanPosition: number,
+  presets: LLMPreset[]
+): Promise<{ llmAssignments: LLMAssignment[]; aiDifficulties: Map<number, AIDifficulty> }> {
+  const llmAssignments: LLMAssignment[] = [];
+  const aiDifficulties = new Map<number, AIDifficulty>();
+
+  for (let i = 0; i < numPlayers; i++) {
+    if (i === humanPosition) continue;
 
     console.log(`\n座位 ${i + 1}:`);
 
-    // 如果有LLM预设，允许选择
     if (presets.length > 0) {
       console.log('  0. 普通 AI (选择难度)');
       presets.forEach((preset, index) => {
         console.log(`  ${index + 1}. LLM: ${preset.name} (${preset.model})`);
       });
-
-      const choice = await getNumberInput('选择控制方式: ', 0, presets.length);
-
+      const choice = await rlNumberInput('选择控制方式: ', 0, presets.length);
       if (choice > 0) {
         llmAssignments.push({ playerIndex: i, presetName: presets[choice - 1].name });
         continue;
       }
     }
 
-    // AI对手: 选择难度
-    const difficulty = await selectDifficulty();
+    const difficulty = await rlSelectDifficulty();
     aiDifficulties.set(i, difficulty);
   }
 
   return { llmAssignments, aiDifficulties };
 }
 
-async function selectDifficulty(): Promise<AIDifficulty> {
+async function rlSelectDifficulty(): Promise<AIDifficulty> {
   console.log('  选择 AI 难度:');
   console.log('    1. Low (初级) — 被动保守，易击败');
   console.log('    2. Medium (中级) — 基础扎实，偶有诈唬');
   console.log('    3. High (高级) — 数学正确，权益驱动');
   console.log('    4. Ultra (超级) — GTO平衡，对手建模');
   console.log('    5. Max (极限) — 全技术融合，最强挑战');
-  const choice = await getNumberInput('  选择难度 (1-5, 默认: 2): ', 1, 5, 2);
+  const choice = await rlNumberInput('  选择难度 (1-5, 默认: 2): ', 1, 5, 2);
   const difficulties = [AIDifficulty.Low, AIDifficulty.Medium, AIDifficulty.High, AIDifficulty.Ultra, AIDifficulty.Max];
   return difficulties[choice - 1];
 }
 
-async function getRequiredInput(question: string, defaultValue?: string): Promise<string> {
-  while (true) {
-    const prompt = defaultValue ? `${question.replace(/: $/, '')} (${defaultValue}): ` : question;
-    const input = await getInput(prompt);
-    const value = input.trim() || defaultValue;
+async function rlConfigureSeat(seatIndex: number, presets: LLMPreset[]): Promise<SeatConfig> {
+  console.log(`\n配置 ${seatIndex + 1} 号位:`);
+  console.log('  1. AI 玩家');
+  console.log('  2. LLM 玩家');
+  console.log('  3. 预留 (远程玩家)');
+  const choice = await rlNumberInput('选择类型: ', 1, 3);
 
-    if (value && value.length > 0) {
-      return value;
+  switch (choice) {
+    case 1: {
+      const difficulty = await rlSelectDifficulty();
+      return { index: seatIndex, type: SeatType.AI, name: `Player ${seatIndex + 1}`, isOccupied: true, aiDifficulty: difficulty };
     }
-
-    console.log('输入不能为空。');
+    case 2: {
+      const name = await rlRequiredInput('输入 LLM 玩家名称: ', `LLM ${seatIndex + 1}`);
+      return { index: seatIndex, type: SeatType.LLM, name, isOccupied: true };
+    }
+    case 3: {
+      const name = await rlRequiredInput(`输入预留座位名称 (默认: Player${seatIndex + 1}): `, `Player${seatIndex + 1}`);
+      return { index: seatIndex, type: SeatType.Remote, name, isOccupied: false };
+    }
+    default:
+      return { index: seatIndex, type: SeatType.AI, name: `Player ${seatIndex + 1}`, isOccupied: true };
   }
 }
 
-async function getYesNoInput(question: string, defaultValue: boolean): Promise<boolean> {
+// ============ LLM 预设管理 ============
+
+async function configureLLMPresets(): Promise<LLMPreset[]> {
+  let presets = await loadLLMPresets();
+
+  if (isTUI()) {
+    while (true) {
+      const presetNames = presets.map((p, i) => `[${i + 1}] ${p.name} - ${p.model} - ${p.baseUrl}`);
+      const options = presetNames.length > 0 ? presetNames : ['(无预设)'];
+      const actions = ['新增预设', '覆盖预设', '删除预设', '返回'];
+
+      const allOptions = [...options, '---', ...actions];
+      const idx = await tuiSelect('LLM API 预设管理', allOptions, allOptions.length - 1);
+
+      if (idx === null) return presets;
+
+      if (idx >= 0 && idx < options.length && presets.length > 0) {
+        // Selected a preset (info only, no action from preset selection alone)
+        // Re-select for action
+        continue;
+      }
+
+      if (idx === options.length + 1) {
+        // 新增
+        const preset = await tuiLLMPresetInput(presets, false);
+        if (preset) {
+          presets = await upsertLLMPreset(preset);
+          tuiShowMessage(`已新增预设: ${preset.name}`);
+        }
+      } else if (idx === options.length + 2) {
+        // 覆盖
+        if (presets.length === 0) {
+          tuiShowMessage('没有可覆盖的预设');
+          continue;
+        }
+        const presetIdx = await tuiSelect('选择要覆盖的预设', presetNames, 0);
+        if (presetIdx !== null) {
+          const preset = await tuiLLMPresetInput(presets, true, presets[presetIdx]);
+          if (preset) {
+            presets = await upsertLLMPreset(preset);
+            tuiShowMessage(`已覆盖预设: ${preset.name}`);
+          }
+        }
+      } else if (idx === options.length + 3) {
+        // 删除
+        if (presets.length === 0) {
+          tuiShowMessage('没有可删除的预设');
+          continue;
+        }
+        const presetIdx = await tuiSelect('选择要删除的预设', presetNames, 0);
+        if (presetIdx !== null) {
+          const confirmed = await tuiYesNo(`确认删除 "${presets[presetIdx].name}"?`, false);
+          if (confirmed) {
+            presets = await deleteLLMPreset(presets[presetIdx].name);
+            tuiShowMessage(`已删除预设: ${presets[presetIdx]?.name ?? ''}`);
+          }
+        }
+      } else if (idx === options.length + 4) {
+        // 返回
+        return presets;
+      }
+    }
+  }
+
+  // Fallback
+  return rlConfigureLLMPresets(presets);
+}
+
+async function tuiLLMPresetInput(
+  existingPresets: LLMPreset[],
+  isUpdate: boolean,
+  existingPreset?: LLMPreset
+): Promise<LLMPreset | null> {
+  const name = await tuiWizardText('预设名称', existingPreset?.name ?? '');
+  if (!name) return null;
+
+  const baseUrl = await tuiWizardText(
+    'API Base URL (如 https://api.openai.com/v1)',
+    existingPreset?.baseUrl ?? ''
+  );
+  if (!baseUrl) return null;
+
+  const apiKey = await tuiWizardText('API Key', existingPreset?.apiKey ?? '');
+  if (!apiKey) return null;
+
+  const model = await tuiWizardText('模型名称 (如 gpt-4o-mini)', existingPreset?.model ?? '');
+  if (!model) return null;
+
+  const tempStr = await tuiWizardText(
+    'temperature (0.95-1, 留空默认1)',
+    existingPreset?.temperature !== undefined ? String(existingPreset.temperature) : ''
+  );
+  const temperature = tempStr ? parseFloat(tempStr) : undefined;
+
+  const useCustomPrompt = await tuiYesNo('设定自定义提示词?', false);
+  let customPrompt: string | undefined = existingPreset?.customPrompt;
+  if (useCustomPrompt) {
+    customPrompt = await tuiWizardText('自定义提示词', existingPreset?.customPrompt ?? '') ?? undefined;
+  }
+
+  return { name, baseUrl, apiKey, model, temperature, customPrompt };
+}
+
+// ============ LLM 预设管理 (Fallback) ============
+
+async function rlConfigureLLMPresets(presets: LLMPreset[]): Promise<LLMPreset[]> {
+  console.log(`已加载 ${presets.length} 个 LLM API 预设。`);
+  const shouldManage = await rlYesNo('是否管理 LLM API 预设？(y/N): ', false);
+  if (!shouldManage) return presets;
+
   while (true) {
-    const input = (await getInput(question)).toLowerCase();
-
-    if (input === '') {
-      return defaultValue;
+    renderPresetListConsole(presets);
+    console.log('\n  --- 操作 ---');
+    console.log('  1. 新增预设');
+    console.log('  2. 覆盖预设');
+    console.log('  3. 删除预设');
+    console.log('  0. 完成');
+    const choice = await rlNumberInput('选择操作: ', 0, 3);
+    if (choice === 0) return presets;
+    if (choice === 1) {
+      const preset = await rlLLMPresetInput(presets, false);
+      presets = await upsertLLMPreset(preset);
+      console.log(`已新增预设: ${preset.name}`);
+    } else if (choice === 2) {
+      if (presets.length === 0) { console.log('没有可覆盖的预设'); continue; }
+      const idx = await rlNumberInput(`选择要覆盖的预设 (1-${presets.length}): `, 1, presets.length);
+      const preset = await rlLLMPresetInput(presets, true, presets[idx - 1]);
+      presets = await upsertLLMPreset(preset);
+      console.log(`已覆盖预设: ${preset.name}`);
+    } else if (choice === 3) {
+      if (presets.length === 0) { console.log('没有可删除的预设'); continue; }
+      const idx = await rlNumberInput(`选择要删除的预设 (1-${presets.length}): `, 1, presets.length);
+      const confirmed = await rlYesNo(`确认删除预设 "${presets[idx - 1].name}"? (y/N): `, false);
+      if (confirmed) {
+        presets = await deleteLLMPreset(presets[idx - 1].name);
+        console.log(`已删除预设: ${presets[idx - 1].name}`);
+      }
     }
-
-    if (input === 'y' || input === 'yes') {
-      return true;
-    }
-
-    if (input === 'n' || input === 'no') {
-      return false;
-    }
-
-    console.log('请输入 y 或 n。');
   }
 }
 
-function renderPresetList(presets: LLMPreset[]): void {
+function renderPresetListConsole(presets: LLMPreset[]): void {
   console.log('\n当前 LLM API 预设:');
-
-  if (presets.length === 0) {
-    console.log('  [无]');
-    return;
-  }
-
+  if (presets.length === 0) { console.log('  [无]'); return; }
   presets.forEach((preset, index) => {
     console.log(`  [#${index + 1}] ${preset.name} - ${preset.model} - ${preset.baseUrl}`);
   });
 }
 
-function parseOptionalNumber(input: string): number | undefined {
-  if (input === '') {
-    return undefined;
-  }
-
-  const value = Number(input);
-  return Number.isFinite(value) ? value : undefined;
-}
-
-async function getTemperatureInput(defaultValue?: number): Promise<number | undefined> {
+async function rlLLMPresetInput(
+  existingPresets: LLMPreset[],
+  isUpdate: boolean,
+  existingPreset?: LLMPreset
+): Promise<LLMPreset> {
+  // Preset name logic
+  let name: string;
   while (true) {
-    const prompt = defaultValue !== undefined
-      ? `temperature (0.95-1)，可留空默认 ${defaultValue}: `
-      : 'temperature (0.95-1)，可留空默认 1: ';
-    const input = (await getInput(prompt)).trim();
-
-    if (input === '') {
-      return defaultValue;
+    const prompt = existingPreset?.name
+      ? `预设名称 (${existingPreset.name}): `
+      : '预设名称: ';
+    const input = await rlInput(prompt);
+    name = input.trim() || existingPreset?.name || '';
+    if (!name) { console.log('预设名称不能为空。'); continue; }
+    const exists = existingPresets.some(p => p.name === name);
+    if (isUpdate) {
+      if (!exists) { console.log('该预设名称不存在。'); continue; }
+    } else {
+      if (exists) { console.log('该预设名称已存在。'); continue; }
     }
-
-    const value = parseFloat(input);
-    if (isNaN(value)) {
-      console.log('输入无效，请输入数字。');
-      continue;
-    }
-
-    if (value < 0.95 || value > 1) {
-      console.log('temperature 必须在 0.95 到 1 之间。');
-      continue;
-    }
-
-    return value;
+    break;
   }
+
+  let baseUrl: string;
+  while (true) {
+    const prompt = existingPreset?.baseUrl
+      ? `OpenAI 兼容 API Base URL (${existingPreset.baseUrl}): `
+      : 'OpenAI 兼容 API Base URL: ';
+    const input = await rlInput(prompt);
+    baseUrl = input.trim() || existingPreset?.baseUrl || '';
+    if (!baseUrl) { console.log('Base URL 不能为空。'); continue; }
+    if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+      console.log('Base URL 必须以 http:// 或 https:// 开头。'); continue;
+    }
+    try { new URL(baseUrl); } catch { console.log('URL 格式无效。'); continue; }
+    break;
+  }
+
+  let apiKey: string;
+  while (true) {
+    const masked = existingPreset?.apiKey
+      ? (existingPreset.apiKey.length > 8 ? existingPreset.apiKey.slice(0, 4) + '...' + existingPreset.apiKey.slice(-4) : '***')
+      : '';
+    const prompt = masked ? `API Key (${masked}): ` : 'API Key: ';
+    const input = await rlInput(prompt);
+    apiKey = input.trim() || existingPreset?.apiKey || '';
+    if (!apiKey) { console.log('API Key 不能为空。'); continue; }
+    if (apiKey.length < 8) { console.log('API Key 长度过短。'); continue; }
+    break;
+  }
+
+  const model = await rlRequiredInput('模型名称: ', existingPreset?.model);
+
+  const tempStr = await rlInput(
+    existingPreset?.temperature !== undefined
+      ? `temperature (${existingPreset.temperature}): `
+      : 'temperature (留空默认1): '
+  );
+  const temperature = tempStr ? parseFloat(tempStr) : existingPreset?.temperature;
+
+  let customPrompt = existingPreset?.customPrompt;
+  const useCustom = await rlYesNo('是否设定自定义提示词？(y/N): ', false);
+  if (useCustom) {
+    console.log('请输入自定义提示词（多行输入，输入空行结束）：');
+    customPrompt = await rlMultilineInput();
+  }
+
+  return { name, baseUrl, apiKey, model, temperature, customPrompt };
 }
 
-async function getMultilineInput(): Promise<string> {
+async function rlMultilineInput(): Promise<string> {
   const lines: string[] = [];
   while (true) {
-    const line = await getInput('');
-    if (line === '') {
-      break;
-    }
+    const line = await rlInput('');
+    if (line === '') break;
     lines.push(line);
   }
   return lines.join('\n');
 }
 
-/**
- * 等待用户按 Enter 键继续
- * @param message - 可选的显示消息
- */
-export async function waitForEnter(message: string = '按 Enter 键继续...'): Promise<void> {
-  await getInput(message);
+// ============ TUI 主机大厅 ============
+
+export interface HostLobbySeat {
+  index: number;
+  type: string;
+  name: string;
+  isOccupied: boolean;
+}
+
+export async function tuiHostLobby(
+  getSeats: () => HostLobbySeat[],
+  onRename: (seatIndex: number, newName: string) => Promise<boolean>,
+  onRefresh: () => Promise<void>
+): Promise<boolean> {
+  const ctx = getMenuContext();
+  if (!ctx) {
+    // Fallback: simple console loop
+    return rlHostLobby(getSeats(), onRename);
+  }
+
+  const { screen, input, theme } = ctx;
+
+  const render = () => {
+    const seats = getSeats();
+    const size = getTerminalSize();
+    const seatLines = seats.map(s => {
+      const status = s.isOccupied ? '已占用' : '空闲';
+      return `  ${s.index + 1}号位 [${s.type}] ${s.name} (${status})`;
+    });
+
+    const lines: string[] = [];
+    lines.push('');
+    lines.push(...renderTitle('等待玩家连接', theme, size.width));
+    lines.push(...renderInfoBox('当前座位状态', seatLines, theme, size.width));
+    lines.push('');
+    lines.push(renderStatusBar('座位: 1-' + seats.length + ' 修改名称  9.刷新  0.开始(需确认两次)', theme, size.width));
+
+    for (let i = 0; i < lines.length; i++) {
+      screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      screen.setLine(i, '');
+    }
+    screen.render();
+  };
+
+  ctx.setRender(render);
+  render();
+
+  let result = false;
+  try {
+    while (true) {
+      const evt = await input.waitForSelection(9);
+      if (evt.type === 'number') {
+        const num = evt.value;
+        const seats = getSeats();
+        if (num >= 1 && num <= seats.length) {
+          const seat = seats[num - 1];
+          if (seat.isOccupied) {
+            tuiShowMessage('该座位已有玩家，不能修改名称');
+            await new Promise(r => setTimeout(r, 1500));
+            render();
+          } else {
+            const newName = await tuiTextInput(`${num}号位新名称`, seat.name);
+            if (newName) {
+              await onRename(num - 1, newName);
+            }
+            render();
+          }
+        } else if (num === 9) {
+          await onRefresh();
+          render();
+        } else if (num === 0) {
+          const confirmed = await tuiYesNo('确认开始游戏? (不可修改座位配置!)', false);
+          if (confirmed) {
+            const doubleConfirm = await tuiYesNo('再次确认开始游戏?', false);
+            if (doubleConfirm) {
+              result = true;
+              break;
+            }
+          }
+          render();
+        }
+      }
+    }
+  } finally {
+    ctx.setRender(null);
+  }
+  return result;
+}
+
+async function rlHostLobby(
+  seats: HostLobbySeat[],
+  onRename: (seatIndex: number, newName: string) => Promise<boolean>
+): Promise<boolean> {
+  while (true) {
+    console.log('\n  当前座位状态:');
+    for (const seat of seats) {
+      const status = seat.isOccupied ? '已占用' : '空闲';
+      console.log(`    ${seat.index + 1}号位 [${seat.type}] ${seat.name} (${status})`);
+    }
+    console.log();
+    console.log('  可用指令:');
+    console.log('    1-8. 修改对应座位名称');
+    console.log('    9.   刷新座位状态');
+    console.log('    0.   开始游戏 (需要输入两次 0 确认)');
+    console.log();
+
+    const choice = await rlNumberInput('输入指令 (0-9): ', 0, 9);
+
+    if (choice >= 1 && choice <= 8) {
+      const seat = seats[choice - 1];
+      if (seat) {
+        if (seat.isOccupied) {
+          console.log('  该座位已有玩家，不能修改名称');
+        } else {
+          const newName = await rlInput(`输入 ${choice} 号位新名称 (当前: ${seat.name}): `);
+          if (newName.trim()) {
+            await onRename(choice - 1, newName.trim());
+            seats[choice - 1].name = newName.trim();
+          }
+        }
+      }
+    } else if (choice === 9) {
+      console.log('  刷新中...');
+    } else if (choice === 0) {
+      console.log('\n  警告: 游戏开始后不能再修改座位配置！');
+      const confirm = await rlNumberInput('再次输入 0 确认开始游戏，或其他数字取消: ', 0, 9);
+      if (confirm === 0) {
+        return true;
+      }
+      console.log('  取消开始游戏，继续等待...');
+    }
+  }
 }

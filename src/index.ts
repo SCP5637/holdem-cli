@@ -15,7 +15,9 @@ import {
   selectRunMode,
   configureHost,
   configureClient,
-  selectSeatAndName
+  selectSeatAndName,
+  getInput,
+  getNumberInput
 } from './ui/inputHandler';
 import { GameUI } from './ui/gameUI';
 import { centerVisual } from './ui/terminal';
@@ -26,6 +28,8 @@ import { Card, SUIT_SYMBOLS } from './types/card';
 import { RunMode, HostConfig, ClientConfig, SeatType, SerializedGameState } from './types/network';
 import { GameServer } from './network/server';
 import { GameClient } from './network/client';
+import { MenuUI } from './ui/menu/menuUI';
+import { tuiHostLobby, HostLobbySeat } from './ui/inputHandler';
 
 const STARTING_CHIPS = 1000;
 const SMALL_BLIND = 10;
@@ -49,27 +53,40 @@ async function main(): Promise<void> {
 
   logger.info('GAME', '游戏启动', { debugMode });
 
+  const menuUI = new MenuUI();
+  let transferDone = false;
+
   try {
+    menuUI.init();
+
     const runMode = await selectRunMode();
 
-    // 用户选择退出
     if (runMode === null) {
+      menuUI.destroy();
       console.log('\n  再见！\n');
       return;
     }
 
     switch (runMode) {
       case RunMode.Local:
-        await runLocalGame();
+        await runLocalGame(menuUI);
+        transferDone = true;
         break;
       case RunMode.Host:
-        await runHostGame();
+        await runHostGame(menuUI);
+        transferDone = true;
         break;
       case RunMode.Client:
-        await runClientGame();
+        await runClientGame(menuUI);
+        transferDone = true;
         break;
     }
   } finally {
+    if (!transferDone) {
+      // Config phase failed or user cancelled — menuUI still owns screen
+      menuUI.destroy();
+    }
+    // If transferDone, GameUI now owns screen+input and its destroy() handles cleanup
     if (gameUI) {
       gameUI.destroy();
       gameUI = null;
@@ -87,7 +104,7 @@ async function main(): Promise<void> {
 /**
  * 运行本地游戏（原逻辑）
  */
-async function runLocalGame(): Promise<void> {
+async function runLocalGame(menuUI: MenuUI): Promise<void> {
   const { numPlayers, humanPosition, startingChips, smallBlind, bigBlind, llmAssignments, aiDifficulties } = await getGameConfig();
 
   const config: GameConfig = {
@@ -110,8 +127,9 @@ async function runLocalGame(): Promise<void> {
   let state = createGame(config);
   logger.info('GAME', '游戏创建成功', { players: state.players.map(p => ({ name: p.name, isHuman: p.isHuman, llmPreset: p.llmPresetName })) });
 
-  // 初始化GameUI
-  gameUI = new GameUI();
+  // 移交给GameUI
+  const { screen, input } = menuUI.transfer();
+  gameUI = new GameUI(screen, input);
   gameUI.init();
 
   try {
@@ -137,7 +155,7 @@ async function runLocalGame(): Promise<void> {
 /**
  * 运行主机游戏
  */
-async function runHostGame(): Promise<void> {
+async function runHostGame(menuUI: MenuUI): Promise<void> {
   isHostMode = true;
 
   const hostConfig = await configureHost();
@@ -148,11 +166,23 @@ async function runHostGame(): Promise<void> {
 
   // 设置事件监听
   gameServer.on('player-joined', (seatIndex, playerName) => {
-    console.log(`  [系统] 玩家 ${playerName} 加入座位 ${seatIndex + 1}`);
+    if (!gameUI) {
+      // Still in lobby phase
+      const seat = hostConfig.seats.find(s => s.index === seatIndex);
+      if (seat) {
+        seat.isOccupied = true;
+        seat.name = playerName;
+      }
+    }
   });
 
   gameServer.on('player-left', (seatIndex, reason) => {
-    console.log(`  [系统] 座位 ${seatIndex + 1} 玩家离开: ${reason}`);
+    if (!gameUI) {
+      const seat = hostConfig.seats.find(s => s.index === seatIndex);
+      if (seat && seat.type === SeatType.Remote) {
+        seat.isOccupied = false;
+      }
+    }
   });
 
   gameServer.on('player-action', (seatIndex, action, amount) => {
@@ -165,73 +195,30 @@ async function runHostGame(): Promise<void> {
   // 启动服务器
   await gameServer.start(hostConfig.port);
 
-  // 等待玩家连接阶段 - 可配置空座位名称
-  let gameReady = false;
-  while (!gameReady) {
-    const BOX_W = 60;
-    const INNER = BOX_W - 2;
-    console.log('\n  ╔' + '═'.repeat(BOX_W) + '╗');
-    console.log('  ║ ' + centerVisual('等待玩家连接', INNER) + ' ║');
-    console.log('  ╚' + '═'.repeat(BOX_W) + '╝');
-    console.log();
+  // TUI大厅等待玩家
+  const getLobbySeats = (): HostLobbySeat[] => hostConfig.seats.map(s => ({
+    index: s.index,
+    type: s.type === SeatType.Host ? '主机' :
+          s.type === SeatType.AI ? 'AI' :
+          s.type === SeatType.LLM ? 'LLM' : '预留',
+    name: s.name,
+    isOccupied: s.isOccupied,
+  }));
 
-    // 显示当前座位状态
-    console.log('  当前座位状态:');
-    for (const seat of hostConfig.seats) {
-      const status = seat.isOccupied ? '已占用' : '空闲';
-      const typeLabel = seat.type === SeatType.Host ? '[主机]' :
-                       seat.type === SeatType.AI ? '[AI]' :
-                       seat.type === SeatType.LLM ? '[LLM]' : '[预留]';
-      console.log(`    ${seat.index + 1}号位 ${typeLabel} ${seat.name} (${status})`);
-    }
-
-    console.log();
-    console.log('  可用指令:');
-    console.log('    1-8. 修改对应座位名称 (如输入 1 修改1号位名称)');
-    console.log('    9.   刷新座位状态');
-    console.log('    0.   开始游戏 (需要输入两次 0 确认)');
-    console.log();
-
-    const choice = await getNumberInput('输入指令 (0-9): ', 0, 9);
-
-    if (choice >= 1 && choice <= 8) {
-      // 修改座位名称
-      const seatIndex = choice - 1;
+  const gameReady = await tuiHostLobby(
+    getLobbySeats,
+    async (seatIndex, newName) => {
       const seat = hostConfig.seats[seatIndex];
-      if (seat) {
-        if (seat.type === SeatType.Remote && !seat.isOccupied) {
-          // 空闲的远程座位可以修改名称
-          const newName = await getInput(`输入 ${seatIndex + 1} 号位新名称 (当前: ${seat.name}): `);
-          if (newName.trim()) {
-            seat.name = newName.trim();
-            console.log(`  已更新 ${seatIndex + 1} 号位名称为: ${seat.name}`);
-          }
-        } else if (seat.type === SeatType.Host) {
-          console.log('  不能修改主机座位名称');
-        } else if (seat.isOccupied) {
-          console.log('  该座位已有玩家，不能修改名称');
-        } else {
-          const newName = await getInput(`输入 ${seatIndex + 1} 号位新名称 (当前: ${seat.name}): `);
-          if (newName.trim()) {
-            seat.name = newName.trim();
-            console.log(`  已更新 ${seatIndex + 1} 号位名称为: ${seat.name}`);
-          }
-        }
-      }
-    } else if (choice === 9) {
-      // 刷新状态，直接继续循环显示最新状态
-      console.log('  刷新中...');
-    } else if (choice === 0) {
-      // 需要输入两次 0 确认开始游戏
-      console.log('\n  ⚠️  警告: 游戏开始后不能再修改座位配置！');
-      const confirm = await getNumberInput('再次输入 0 确认开始游戏，或其他数字取消: ', 0, 9);
-      if (confirm === 0) {
-        gameReady = true;
-        console.log('  游戏即将开始...');
-      } else {
-        console.log('  取消开始游戏，继续等待...');
-      }
+      if (seat) seat.name = newName;
+      return true;
+    },
+    async () => {
+      // Refresh — no-op, seats are live
     }
+  );
+
+  if (!gameReady) {
+    return;
   }
 
   // 创建游戏配置
@@ -271,8 +258,9 @@ async function runHostGame(): Promise<void> {
   // 广播初始状态
   gameServer.broadcastGameState(state);
 
-  // 初始化GameUI
-  gameUI = new GameUI();
+  // 移交给GameUI
+  const { screen, input } = menuUI.transfer();
+  gameUI = new GameUI(screen, input);
   gameUI.init();
 
   try {
@@ -306,7 +294,7 @@ async function runHostGame(): Promise<void> {
 /**
  * 运行客户端游戏
  */
-async function runClientGame(): Promise<void> {
+async function runClientGame(menuUI: MenuUI): Promise<void> {
   isClientMode = true;
 
   const clientConfig = await configureClient();
@@ -323,16 +311,12 @@ async function runClientGame(): Promise<void> {
   gameClient.on('connected', () => {
     if (gameUI) {
       gameUI.showMessage('已连接到服务器');
-    } else {
-      console.log('  [连接] 已连接到服务器');
     }
   });
 
   gameClient.on('disconnected', (reason) => {
     if (gameUI) {
       gameUI.showMessage(`已断开: ${reason}`);
-    } else {
-      console.log(`  [连接] 已断开: ${reason}`);
     }
     process.exit(0);
   });
@@ -344,7 +328,6 @@ async function runClientGame(): Promise<void> {
     if (gameUI) {
       gameUI.setMySeat(seatIndex);
 
-      // 检查是否轮到自己
       const isMyTurn = gameState.currentPlayerIndex === seatIndex;
       const myPlayer = gameState.players.find(p => p.id === seatIndex);
 
@@ -361,8 +344,6 @@ async function runClientGame(): Promise<void> {
     if (!success && message) {
       if (gameUI) {
         gameUI.showMessage(message);
-      } else {
-        console.log(`  [错误] ${message}`);
       }
     }
     waitingForAction = false;
@@ -371,10 +352,7 @@ async function runClientGame(): Promise<void> {
   // 连接到服务器
   await gameClient.connect({ host: clientConfig.host, port: clientConfig.port });
 
-  // 请求加入游戏
-  console.log('\n  等待服务器响应...');
-
-  // 等待一段时间让连接稳定
+  // 等待连接稳定
   await new Promise(resolve => setTimeout(resolve, 500));
 
   // 选择座位并加入
@@ -389,7 +367,6 @@ async function runClientGame(): Promise<void> {
     gameClient!.on('join-response', (success, message) => {
       clearTimeout(timeout);
       if (success) {
-        console.log('  成功加入游戏！');
         resolve();
       } else {
         reject(new Error(message || '加入失败'));
@@ -397,83 +374,32 @@ async function runClientGame(): Promise<void> {
     });
   });
 
-  // 等待游戏开始前的交互循环
-  console.log('\n  等待游戏开始...');
-  console.log('  可用指令:');
-  console.log('    1. 修改当前名称');
-  console.log('    2. 切换到其他空座位');
-  console.log('    3. 刷新座位状态');
-  console.log('    0. 等待游戏开始');
-  console.log('');
+  // 等待游戏开始
+  // Pre-game interaction: simple enter-to-wait
+  await waitForEnter('按 Enter 等待游戏开始...');
 
-  // 等待游戏开始前的交互循环
+  // Poll until game starts
   while (gameClient.getIsConnected() && !gameStarted) {
-    try {
-      // 使用非阻塞方式读取输入
-      const choice = await getNumberInputWithTimeout('输入指令 (0-3): ', 0, 3, 5000);
-
-      switch (choice) {
-        case 1: {
-          // 修改名称
-          const newName = await getInput('输入新名称: ');
-          if (newName.trim()) {
-            gameClient.rename(newName.trim());
-            console.log(`  已发送更名请求: ${newName}`);
-          }
-          break;
-        }
-        case 2: {
-          // 切换座位
-          const newSeat = await getNumberInput('输入要切换到的座位号: ', 1, 8) - 1;
-          const newName = await getInput('输入新名称: ');
-          if (newName.trim()) {
-            gameClient.switchSeat(newSeat, newName.trim());
-            console.log(`  已发送换座请求: ${newSeat + 1}号位`);
-          }
-          break;
-        }
-        case 3: {
-          // 刷新座位状态
-          console.log('  刷新中...');
-          gameClient.requestSeatList();
-          break;
-        }
-        case 0: {
-          // 进入等待模式
-          console.log('  进入等待模式，游戏开始后将自动进入游戏...');
-          await waitForGameStart();
-          gameStarted = true;
-          break;
-        }
-      }
-    } catch {
-      // 超时或输入错误，继续循环
-    }
-
-    // 检查是否收到游戏状态（表示游戏已开始）
     if (currentGameState) {
       gameStarted = true;
+      break;
     }
-
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
 
-  // 游戏循环：初始化GameUI
-  gameUI = new GameUI();
+  // 移交给GameUI
+  const { screen, input } = menuUI.transfer();
+  gameUI = new GameUI(screen, input);
   if (mySeatIndex >= 0) gameUI.setMySeat(mySeatIndex);
   gameUI.init();
-  console.log('\n  游戏开始！');
 
   try {
-    // 首次渲染
     if (currentGameState) {
       gameUI.renderGame(currentGameState);
     }
 
-    // 保持进程运行
     while (gameClient.getIsConnected()) {
       if (waitingForAction && currentGameState) {
-        // 获取玩家输入
         const availableActions = getAvailableActionsFromState(currentGameState, mySeatIndex);
         if (availableActions.length > 0) {
           try {
@@ -490,48 +416,6 @@ async function runClientGame(): Promise<void> {
     gameUI.destroy();
     gameUI = null;
   }
-}
-
-/**
- * 等待游戏开始
- */
-async function waitForGameStart(): Promise<void> {
-  return new Promise((resolve) => {
-    const checkInterval = setInterval(() => {
-      // 检查是否收到游戏状态
-      if (gameClient) {
-        // 游戏开始后会收到游戏状态
-        resolve();
-        clearInterval(checkInterval);
-      }
-    }, 500);
-  });
-}
-
-/**
- * 带超时的数字输入
- */
-async function getNumberInputWithTimeout(
-  question: string,
-  min: number,
-  max: number,
-  timeoutMs: number
-): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('输入超时'));
-    }, timeoutMs);
-
-    getNumberInput(question, min, max)
-      .then((result) => {
-        clearTimeout(timeout);
-        resolve(result);
-      })
-      .catch((err) => {
-        clearTimeout(timeout);
-        reject(err);
-      });
-  });
 }
 
 /**
@@ -873,35 +757,6 @@ function getNextPhase(current: string): string {
 
 function formatCard(card: Card): string {
   return `${card.rank}${SUIT_SYMBOLS[card.suit]}`;
-}
-
-// 辅助函数
-async function getInput(question: string): Promise<string> {
-  const readline = await import('readline');
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
-
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
-
-async function getNumberInput(question: string, min: number, max: number): Promise<number> {
-  while (true) {
-    const input = await getInput(question);
-    const num = parseInt(input, 10);
-
-    if (!isNaN(num) && num >= min && num <= max) {
-      return num;
-    }
-
-    console.log(`输入无效。请输入 ${min} 到 ${max} 之间的数字。`);
-  }
 }
 
 main().catch(console.error);
