@@ -518,7 +518,7 @@ export class GameUI {
         isHuman: p.isHuman || false,
         isRemote: p.isRemote || false,
         isYou: this.mySeatIdx >= 0 && p.id === this.mySeatIdx,
-        showCards: showAllCards || (p.isHuman && !p.isActive) || (this.mySeatIdx >= 0 && p.id === this.mySeatIdx),
+        showCards: showAllCards || p.isHuman || (this.mySeatIdx >= 0 && p.id === this.mySeatIdx),
       })),
       currentPlayerIndex: (state as any).currentPlayerIndex || 0,
       dealerIndex: (state as any).dealerIndex || 0,

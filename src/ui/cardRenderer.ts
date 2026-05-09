@@ -143,13 +143,17 @@ export function renderCardsCompact(cards: Card[], hiddenIndices: number[] = []):
 
 /**
  * 单行标签卡牌（窄布局用）
+ * 红桃/黑桃用{}花括号，梅花/方块用[]平括号，提供颜色外的形状区分
  */
 export function renderCardLabel(card: Card, hidden: boolean = false): string {
   if (hidden) return '[?]';
   const suit = SUIT_SYMBOLS[card.suit];
   const color = SUIT_COLORS[card.suit];
   const reset = RESET_COLOR;
-  return `${color}[${card.rank}${suit}]${reset}`;
+  const isPeach = card.suit === Suit.Hearts || card.suit === Suit.Spades;
+  const open = isPeach ? '{' : '[';
+  const close = isPeach ? '}' : ']';
+  return `${color}${open}${card.rank}${suit}${close}${reset}`;
 }
 
 /**

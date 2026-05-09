@@ -5,7 +5,7 @@
 
 import { Card, Suit, Rank } from '../../types/card';
 import { Theme, themed, chipText } from '../theme';
-import { renderCards, renderCardsSimple } from '../cardRenderer';
+import { renderCards, renderCardsSimple, renderCardsCompact } from '../cardRenderer';
 import { padVisual, visualWidth } from '../terminal';
 import { padAnsi } from '../engine/ansi';
 
@@ -80,11 +80,13 @@ function renderFull(data: PlayerSeatData, theme: Theme, width: number): string[]
   } else if (!data.isActive) {
     lines.push(themed(BOX_V, b) + padVisual(themed('  (已弃牌)', theme.dim), innerW) + themed(BOX_V, b));
   } else if (data.hand.length > 0 && !data.showCards) {
-    // 背面(对手牌)
-    const hiddenLine = themed('┌───┐ ┌───┐', data.isAllIn ? theme.dim : theme.cardBack);
-    lines.push(themed(BOX_V, b) + padVisual(hiddenLine, innerW) + themed(BOX_V, b));
-    lines.push(themed(BOX_V, b) + padVisual(themed('│ ? │ │ ? │', theme.cardBack), innerW) + themed(BOX_V, b));
-    lines.push(themed(BOX_V, b) + padVisual(themed('└───┘ └───┘', theme.cardBack), innerW) + themed(BOX_V, b));
+    // 对手牌背：用5行隐藏卡牌匹配人类玩家牌面高度
+    const backColor = data.isAllIn ? theme.dim : theme.cardBack;
+    const cards = data.hand.map(toCardType);
+    const hiddenRender = renderCards(cards, [0, 1]);
+    for (const line of hiddenRender.split('\n')) {
+      lines.push(themed(BOX_V, b) + padVisual(themed(line, backColor), innerW) + themed(BOX_V, b));
+    }
   }
 
   // 底部
@@ -111,14 +113,20 @@ function renderCompact(data: PlayerSeatData, theme: Theme, width: number): strin
   const betStr = data.currentBet > 0 ? ' ' + themed('注:', theme.dim) + ' ' + chipText(data.currentBet) : '';
   lines.push(themed(BOX_V, b) + padVisual(chipsStr + betStr, innerW) + themed(BOX_V, b));
 
-  // 简牌
+  // 3行紧凑牌(中间密度)
   if (data.hand.length > 0 && data.showCards) {
-    const simple = renderCardsSimple(data.hand.map(toCardType));
-    lines.push(themed(BOX_V, b) + padVisual(simple, innerW) + themed(BOX_V, b));
+    const cards = data.hand.map(toCardType);
+    const cardRender = renderCardsCompact(cards);
+    for (const line of cardRender.split('\n')) {
+      lines.push(themed(BOX_V, b) + padVisual(line, innerW) + themed(BOX_V, b));
+    }
   } else if (!data.isActive) {
     lines.push(themed(BOX_V, b) + padVisual(themed('(已弃牌)', theme.dim), innerW) + themed(BOX_V, b));
   } else if (data.hand.length > 0 && !data.showCards) {
-    lines.push(themed(BOX_V, b) + padVisual(themed('[?] [?]', theme.cardBack), innerW) + themed(BOX_V, b));
+    const backColor = data.isAllIn ? theme.dim : theme.cardBack;
+    lines.push(themed(BOX_V, b) + padVisual(themed('┌───┐ ┌───┐', backColor), innerW) + themed(BOX_V, b));
+    lines.push(themed(BOX_V, b) + padVisual(themed('│ ? │ │ ? │', backColor), innerW) + themed(BOX_V, b));
+    lines.push(themed(BOX_V, b) + padVisual(themed('└───┘ └───┘', backColor), innerW) + themed(BOX_V, b));
   }
 
   lines.push(themed('└' + BOX_H.repeat(innerW) + '┘', b));
