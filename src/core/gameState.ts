@@ -68,6 +68,7 @@ export function createGame(config: GameConfig): GameState {
     communityCards: [],
     pot: 0,
     sidePots: [],
+    accumulatedPot: 0,
     currentPhase: GamePhase.PreFlop,
     currentPlayerIndex: 0,
     dealerIndex: 0,
@@ -229,7 +230,7 @@ function calculateSidePots(state: GameState): void {
 
     if (allInPlayers.length === 0) {
       // 没有All-In，所有下注都进主底池
-      state.pot = sidePots.reduce((sum, pot) => sum + pot.amount, 0) + mainPotAmount;
+      state.pot = sidePots.reduce((sum, pot) => sum + pot.amount, 0) + mainPotAmount + state.accumulatedPot;
       state.sidePots = [];
     } else {
       // 有All-In玩家，需要分离主底池和边池
@@ -273,11 +274,11 @@ function calculateSidePots(state: GameState): void {
         }
       }
 
-      state.pot = newMainPot;
+      state.pot = newMainPot + state.accumulatedPot;
       state.sidePots = newSidePots;
     }
   } else {
-    state.pot = mainPotAmount;
+    state.pot = mainPotAmount + state.accumulatedPot;
     state.sidePots = [];
   }
 }
@@ -436,6 +437,10 @@ export function advancePhase(state: GameState): void {
  * @param state - 当前游戏状态
  */
 function resetBets(state: GameState): void {
+  // 将当前阶段底池累积到跨阶段字段，防止 calculateSidePots 重新计算时丢失
+  const sidePotTotal = state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+  state.accumulatedPot += state.pot + sidePotTotal;
+
   for (const player of state.players) {
     player.currentBet = 0;
     player.hasActed = false;
@@ -476,11 +481,12 @@ export function determineHandWinners(state: GameState): number[] {
  * @param winnerIds - 获胜玩家ID数组
  */
 export function awardPot(state: GameState, winnerIds: number[]): void {
-  // 分配主底池
-  if (state.pot > 0) {
-    const mainPotWinners = winnerIds;
-    distributePot(state, mainPotWinners, state.pot);
+  // 分配主底池（含跨阶段累积底池）
+  const totalMainPot = state.pot + state.accumulatedPot;
+  if (totalMainPot > 0) {
+    distributePot(state, winnerIds, totalMainPot);
     state.pot = 0;
+    state.accumulatedPot = 0;
   }
 
   // 分配边池
@@ -534,6 +540,7 @@ export function prepareNewHand(state: GameState): void {
   state.communityCards = [];
   state.pot = 0;
   state.sidePots = [];
+  state.accumulatedPot = 0;
   state.currentPhase = GamePhase.PreFlop;
   state.currentBet = 0;
   state.minRaise = state.bigBlind;

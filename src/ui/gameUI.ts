@@ -450,7 +450,16 @@ export class GameUI {
       reRender();
 
       while (true) {
-        const sel = await waitForActionKey();
+        // 120s超时保护：Promise.race确保即使无按键事件也会超时
+        const timeoutPromise = new Promise<'timeout'>(resolve =>
+          setTimeout(() => resolve('timeout'), 120000)
+        );
+        const result = await Promise.race([waitForActionKey(), timeoutPromise]);
+        if (result === 'timeout') {
+          this.overlayState = { type: 'none' };
+          return { action: PlayerAction.Fold };
+        }
+        const sel = result;
 
         if (sel === 'left') {
           selectedIdx = (selectedIdx - 1 + ordered.length) % ordered.length;
@@ -607,7 +616,7 @@ export class GameUI {
       handNumber = (ss as any).handNumber || 1;
     }
 
-    const pot = 'pot' in state ? state.pot : (state as SerializedGameState).pot;
+    const pot = ('pot' in state ? state.pot : (state as SerializedGameState).pot) + ((state as any).accumulatedPot || 0);
     const currentBet = 'currentBet' in state ? state.currentBet : (state as SerializedGameState).currentBet;
     const sidePots = (state as any).sidePots || [];
 
@@ -649,7 +658,8 @@ export class GameUI {
   private getTotalPot(state: GameState | SerializedGameState): number {
     const pot = 'pot' in state ? state.pot : (state as SerializedGameState).pot;
     const sidePots = (('sidePots' in state ? state.sidePots : (state as SerializedGameState).sidePots) || []) as Array<{ amount: number }>;
-    return pot + sidePots.reduce((s, sp) => s + sp.amount, 0);
+    const accumulated = (state as any).accumulatedPot || 0;
+    return pot + sidePots.reduce((s, sp) => s + sp.amount, 0) + accumulated;
   }
 
   /** 非TTY降级渲染 */

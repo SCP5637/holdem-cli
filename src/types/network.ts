@@ -174,6 +174,7 @@ export interface SerializedGameState {
   communityCards: SerializedCard[];
   pot: number;
   sidePots: SerializedSidePot[];
+  accumulatedPot: number;
   currentPhase: string;
   currentPlayerIndex: number;
   dealerIndex: number;

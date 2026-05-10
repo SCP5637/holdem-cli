@@ -392,6 +392,8 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
         const from = phaseLabels[prevPhase] || prevPhase;
         const to = phaseLabels[gameState.currentPhase] || gameState.currentPhase;
         gameUI.addSystemMessage(`${from} → ${to}`);
+        // 联机方也展示阶段过渡动画（异步，不阻塞状态更新）
+        gameUI.showPhaseTransition(2500, prevPhase, gameState.currentPhase).catch(() => {});
       }
       prevPhase = gameState.currentPhase;
 
@@ -626,7 +628,7 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
 
         if (remoteAction) {
           const toCall = state.currentBet - player.currentBet;
-          const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+          const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0) + state.accumulatedPot;
           const success = executeAction(state, remoteAction.action, remoteAction.amount);
           gameServer!.sendActionResult(player.id, success, remoteAction.action, remoteAction.amount);
 
@@ -655,7 +657,7 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
 
         if (hostAction) {
           const toCall = state.currentBet - player.currentBet;
-          const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+          const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0) + state.accumulatedPot;
           const success = executeAction(state, hostAction.action, hostAction.amount);
 
           if (success) {
@@ -682,7 +684,7 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
 
         if (aiAction) {
           const toCall = state.currentBet - player.currentBet;
-          const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+          const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0) + state.accumulatedPot;
           const success = executeAction(state, aiAction.action, aiAction.amount);
 
           if (success) {
@@ -846,7 +848,7 @@ async function playBettingRound(state: GameState, llmPresetMap: Map<string, LLMP
 
       if (action) {
         const toCall = state.currentBet - player.currentBet;
-        const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+        const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0) + state.accumulatedPot;
         const success = executeAction(state, action.action, action.amount);
 
         if (success) {

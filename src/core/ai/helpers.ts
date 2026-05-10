@@ -27,7 +27,7 @@ export function calculatePotOdds(state: GameState, player: Player): number {
 
 /** 计算底池总额 */
 export function getTotalPot(state: GameState): number {
-  return state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
+  return state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0) + state.accumulatedPot;
 }
 
 /** 加注金额计算 (基于底池比例) */

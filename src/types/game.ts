@@ -100,6 +100,8 @@ export interface GameState {
   pot: number;
   /** 边池列表 */
   sidePots: SidePot[];
+  /** 跨阶段累积底池（resetBets时保存，calculateSidePots时加回） */
+  accumulatedPot: number;
   currentPhase: GamePhase;
   currentPlayerIndex: number;
   dealerIndex: number;

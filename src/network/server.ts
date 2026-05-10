@@ -545,6 +545,7 @@ export class GameServer extends EventEmitter {
         amount: sp.amount,
         eligiblePlayers: sp.eligiblePlayers
       })),
+      accumulatedPot: gameState.accumulatedPot,
       currentPhase: gameState.currentPhase,
       currentPlayerIndex: gameState.currentPlayerIndex,
       dealerIndex: gameState.dealerIndex,
