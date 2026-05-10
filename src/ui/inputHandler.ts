@@ -4,6 +4,7 @@
  */
 
 import * as readline from 'readline';
+import { execSync } from 'child_process';
 import { AIDifficulty } from '../types/game';
 import { LLMAssignment, LLMPreset } from '../types/llm';
 import { loadLLMPresets, upsertLLMPreset, deleteLLMPreset } from '../core/llmPresetStore';
@@ -15,6 +16,7 @@ import {
   renderInfoBox, renderDescribedList, renderQuickActions
 } from './menu/components';
 import { getTerminalSize } from './terminal';
+import { KeyEvent } from './engine/input';
 
 // ============ TUI 核心交互 ============
 
@@ -225,10 +227,34 @@ async function tuiNumberInput(
           text = text.slice(0, -1);
           render();
         }
+      } else if (key.name === 'ctrl+v' || (key.ctrl && key.name === 'v')) {
+        // Ctrl+V 粘贴 — 只取数字
+        try {
+          const clip = execSync(
+            process.platform === 'win32'
+              ? 'powershell -command "Get-Clipboard"'
+              : (process.platform === 'darwin' ? 'pbpaste' : 'xclip -selection clipboard -o 2>/dev/null || xsel --clipboard --output 2>/dev/null'),
+            { encoding: 'utf8', timeout: 3000, shell: process.platform !== 'win32' ? '/bin/bash' : undefined }
+          ).trim();
+          const digits = clip.replace(/[^0-9]/g, '');
+          const available = 10 - text.length;
+          if (available > 0 && digits.length > 0) {
+            text += digits.slice(0, available);
+            render();
+          }
+        } catch { /* 剪切板读取失败，忽略 */ }
       } else if (key.name.length === 1) {
         const ch = key.name.charCodeAt(0);
         if (ch >= 0x30 && ch <= 0x39 && text.length < 10) {
           text += key.name;
+          render();
+        }
+      } else if (key.name.length > 1 && !key.ctrl && !key.meta) {
+        // Shift+Insert 批量粘贴 — 只取数字
+        const digits = key.name.replace(/[^0-9]/g, '');
+        const available = 10 - text.length;
+        if (available > 0 && digits.length > 0) {
+          text += digits.slice(0, available);
           render();
         }
       }
@@ -533,19 +559,62 @@ export async function configureHost(): Promise<HostConfig> {
 
 export async function configureClient(): Promise<ClientConfig & { seatIndex: number; playerName: string }> {
   if (isTUI()) {
-    const host = await tuiTextInput('主机 IP 地址', '');
-    if (!host) throw new Error('配置取消');
+    const rawHost = await tuiTextInput('主机地址 (IP或域名, 可含端口如 host:15637)', '');
+    if (!rawHost) throw new Error('配置取消');
 
-    const port = await tuiWizardNumber('主机端口', 1, 65535, undefined);
-    if (port === null) throw new Error('配置取消');
+    let host = rawHost.trim();
+    let port = 0;
+
+    // 解析 host:port 格式
+    const portMatch = host.match(/^(.+?):(\d{1,5})$/);
+    if (portMatch) {
+      host = portMatch[1];
+      const parsedPort = parseInt(portMatch[2], 10);
+      if (parsedPort >= 1 && parsedPort <= 65535) {
+        port = parsedPort;
+      } else {
+        tuiShowMessage('端口范围 1-65535，请重新输入');
+        await new Promise(r => setTimeout(r, 2000));
+        return configureClient(); // 递归重试
+      }
+    }
+
+    // 验证 host 格式（纯IP 或 域名）
+    if (!port) {
+      const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+      const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/;
+      if (!ipRegex.test(host) && !domainRegex.test(host) && host !== 'localhost') {
+        tuiShowMessage('无效的地址格式，请输入有效IP或域名');
+        await new Promise(r => setTimeout(r, 2000));
+        return configureClient();
+      }
+
+      const portNum = await tuiWizardNumber('主机端口', 1, 65535, undefined);
+      if (portNum === null) throw new Error('配置取消');
+      port = portNum;
+    }
 
     return { host, port, seatIndex: -1, playerName: '' };
   }
 
   // Fallback
   console.log('\n--- 加入联机房间 ---\n');
-  const host = await rlRequiredInput('输入主机 IP 地址: ');
-  const port = await rlNumberInput('输入主机端口: ', 1, 65535);
+  let host = await rlRequiredInput('输入主机 IP 地址或域名 (可含端口如 host:15637): ');
+  let port = 0;
+
+  const portMatch = host.match(/^(.+?):(\d{1,5})$/);
+  if (portMatch) {
+    host = portMatch[1];
+    const parsedPort = parseInt(portMatch[2], 10);
+    if (parsedPort >= 1 && parsedPort <= 65535) {
+      port = parsedPort;
+    }
+  }
+
+  if (!port) {
+    port = await rlNumberInput('输入主机端口: ', 1, 65535);
+  }
+
   return { host, port, seatIndex: -1, playerName: '' };
 }
 
@@ -741,11 +810,20 @@ async function tuiSelectDifficulty(): Promise<AIDifficulty | null> {
 }
 
 async function tuiConfigureSeat(seatIndex: number, presets: LLMPreset[]): Promise<SeatConfig | null> {
-  const options = ['AI 玩家', 'LLM 玩家', '预留 (远程玩家)'];
+  const baseOptions = ['AI 玩家', '预留 (远程玩家)'];
+  const hasPresets = presets.length > 0;
+  // 有预设时在AI和远程之间插入LLM选项
+  const options = hasPresets
+    ? ['AI 玩家', 'LLM 玩家', '预留 (远程玩家)']
+    : baseOptions;
+
   const choice = await tuiSelect(`座位 ${seatIndex + 1} 类型`, options, 0);
   if (choice === null) return null;
 
-  switch (choice) {
+  // 没有预设时，choice 1 是"预留"
+  const mappedChoice = hasPresets ? choice : (choice === 1 ? 2 : choice);
+
+  switch (mappedChoice) {
     case 0: {
       const diff = await tuiSelectDifficulty();
       return {
@@ -757,9 +835,20 @@ async function tuiConfigureSeat(seatIndex: number, presets: LLMPreset[]): Promis
       };
     }
     case 1: {
-      const name = await tuiWizardText('LLM 玩家名称', `LLM ${seatIndex + 1}`);
+      // LLM 玩家 — 选择预设模板
+      const presetOptions = presets.map(p => `${p.name} (${p.model})`);
+      const presetIdx = await tuiSelect('选择 LLM 预设', presetOptions, 0);
+      if (presetIdx === null) return null; // 取消
+      const selectedPreset = presets[presetIdx];
+      const name = await tuiWizardText('LLM 玩家名称', `${selectedPreset.name} ${seatIndex + 1}`);
       if (!name) return null;
-      return { index: seatIndex, type: SeatType.LLM, name, isOccupied: true };
+      return {
+        index: seatIndex,
+        type: SeatType.LLM,
+        name,
+        isOccupied: true,
+        llmPresetName: selectedPreset.name
+      };
     }
     case 2: {
       const name = await tuiWizardText('预留座位名称', `Player${seatIndex + 1}`);
@@ -819,19 +908,34 @@ async function rlSelectDifficulty(): Promise<AIDifficulty> {
 
 async function rlConfigureSeat(seatIndex: number, presets: LLMPreset[]): Promise<SeatConfig> {
   console.log(`\n配置 ${seatIndex + 1} 号位:`);
-  console.log('  1. AI 玩家');
-  console.log('  2. LLM 玩家');
-  console.log('  3. 预留 (远程玩家)');
-  const choice = await rlNumberInput('选择类型: ', 1, 3);
+  const options = ['1. AI 玩家'];
+  if (presets.length > 0) {
+    options.push('2. LLM 玩家');
+    options.push('3. 预留 (远程玩家)');
+  } else {
+    options.push('2. 预留 (远程玩家)');
+  }
+  options.forEach(o => console.log(`  ${o}`));
 
-  switch (choice) {
+  const maxOpt = presets.length > 0 ? 3 : 2;
+  const choice = await rlNumberInput('选择类型: ', 1, maxOpt);
+
+  // 没有预设时，choice 2 是预留
+  const adjustedChoice = presets.length > 0 ? choice : (choice === 2 ? 3 : choice);
+
+  switch (adjustedChoice) {
     case 1: {
       const difficulty = await rlSelectDifficulty();
       return { index: seatIndex, type: SeatType.AI, name: `Player ${seatIndex + 1}`, isOccupied: true, aiDifficulty: difficulty };
     }
     case 2: {
-      const name = await rlRequiredInput('输入 LLM 玩家名称: ', `LLM ${seatIndex + 1}`);
-      return { index: seatIndex, type: SeatType.LLM, name, isOccupied: true };
+      // LLM 玩家 — 选择预设
+      console.log(`\n  可用 LLM 预设:`);
+      presets.forEach((p, i) => console.log(`    ${i + 1}. ${p.name} (${p.model})`));
+      const presetIdx = await rlNumberInput(`  选择预设 (1-${presets.length}): `, 1, presets.length) - 1;
+      const preset = presets[presetIdx];
+      const name = await rlRequiredInput(`输入 LLM 玩家名称 (默认: ${preset.name} ${seatIndex + 1}): `, `${preset.name} ${seatIndex + 1}`);
+      return { index: seatIndex, type: SeatType.LLM, name, isOccupied: true, llmPresetName: preset.name };
     }
     case 3: {
       const name = await rlRequiredInput(`输入预留座位名称 (默认: Player${seatIndex + 1}): `, `Player${seatIndex + 1}`);
@@ -1120,6 +1224,14 @@ export async function tuiHostLobby(
   ctx.setRender(render);
   render();
 
+  // 自动刷新定时器 — 只在无sub-dialog覆盖时刷新
+  const autoRefresh = setInterval(() => {
+    const cur = ctx.getRender();
+    if (cur && cur !== render) return; // sub-dialog活跃中，不渲染
+    if (!cur) ctx.setRender(render);   // sub-dialog刚结束，恢复
+    render();
+  }, 1000);
+
   let result = false;
   try {
     while (true) {
@@ -1129,8 +1241,9 @@ export async function tuiHostLobby(
         const seats = getSeats();
         if (num >= 1 && num <= seats.length) {
           const seat = seats[num - 1];
-          if (seat.isOccupied) {
-            tuiShowMessage('该座位已有玩家，不能修改名称');
+          // 只禁止重命名已连接的远程玩家座位，允许重命名AI/LLM座位
+          if (seat.type === '预留' && seat.isOccupied) {
+            tuiShowMessage('该远程座位已有玩家连接，不能修改名称');
             await new Promise(r => setTimeout(r, 1500));
             render();
           } else {
@@ -1157,6 +1270,7 @@ export async function tuiHostLobby(
       }
     }
   } finally {
+    clearInterval(autoRefresh);
     ctx.setRender(null);
   }
   return result;
@@ -1174,7 +1288,7 @@ async function rlHostLobby(
     }
     console.log();
     console.log('  可用指令:');
-    console.log('    1-8. 修改对应座位名称');
+    console.log('    1-8. 修改对应座位名称 (仅已连接的远程玩家不可修改)');
     console.log('    9.   刷新座位状态');
     console.log('    0.   开始游戏 (需要输入两次 0 确认)');
     console.log();
@@ -1184,8 +1298,8 @@ async function rlHostLobby(
     if (choice >= 1 && choice <= 8) {
       const seat = seats[choice - 1];
       if (seat) {
-        if (seat.isOccupied) {
-          console.log('  该座位已有玩家，不能修改名称');
+        if (seat.type === '预留' && seat.isOccupied) {
+          console.log('  该远程座位已有玩家连接，不能修改名称');
         } else {
           const newName = await rlInput(`输入 ${choice} 号位新名称 (当前: ${seat.name}): `);
           if (newName.trim()) {
@@ -1205,4 +1319,96 @@ async function rlHostLobby(
       console.log('  取消开始游戏，继续等待...');
     }
   }
+}
+
+// ============ 客户端座位选择 & 等待大厅 ============
+
+/**
+ * 客户端 TUI 座位选择（从可用座位列表中选）
+ */
+export async function tuiClientSeatSelect(options: string[]): Promise<number | null> {
+  const ctx = getMenuContext();
+  if (!ctx) {
+    // Fallback: console
+    options.forEach((o, i) => console.log(`  ${i + 1}. ${o}`));
+    const choice = await rlNumberInput('选择座位: ', 1, options.length);
+    return choice - 1;
+  }
+  return tuiSelect('选择你的座位', options, 0);
+}
+
+/**
+ * 客户端等待游戏开始界面
+ * @param checkGameStarted 回调，返回true表示游戏已开始
+ * @returns true=游戏已开始, false=用户主动退出
+ */
+export async function tuiClientWaitForGame(checkGameStarted: () => boolean): Promise<boolean> {
+  const ctx = getMenuContext();
+  if (!ctx) {
+    // Fallback: console 模式
+    console.log('\n  已加入房间，等待主机开始游戏... (Ctrl+C 退出)');
+    let attempts = 0;
+    while (!checkGameStarted() && attempts < 600) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      attempts++;
+    }
+    return checkGameStarted();
+  }
+
+  const { screen, input, theme } = ctx;
+
+  const render = () => {
+    const size = getTerminalSize();
+    const lines: string[] = [];
+    lines.push('');
+    lines.push(...renderTitle('已加入房间', theme, size.width));
+    lines.push('');
+    lines.push(...renderInfoBox('状态', [
+      '等待主机开始游戏...',
+      '',
+      '按 Esc 退出房间'
+    ], theme, size.width));
+    lines.push('');
+    lines.push(renderStatusBar('等待中...  Esc 退出', theme, size.width));
+    for (let i = 0; i < lines.length; i++) {
+      screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      screen.setLine(i, '');
+    }
+    screen.render();
+  };
+
+  ctx.setRender(render);
+  render();
+
+  return new Promise<boolean>((resolve) => {
+    let resolved = false;
+
+    const finish = (value: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      clearInterval(autoRefresh);
+      input.removeCallback(keyHandler);
+      ctx.setRender(null);
+      resolve(value);
+    };
+
+    // 每500ms检查游戏是否开始 + 刷新显示
+    const autoRefresh = setInterval(() => {
+      if (checkGameStarted()) {
+        finish(true);
+      } else {
+        render();
+      }
+    }, 500);
+
+    // 监听 Escape 键
+    const keyHandler = (key: KeyEvent) => {
+      if (key.name === 'escape') {
+        finish(false);
+      }
+    };
+    input.onKey(keyHandler);
+  });
 }

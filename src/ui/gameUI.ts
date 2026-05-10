@@ -88,6 +88,12 @@ export class GameUI {
       } else if (key.name === 'down') {
         this.actionLogScroll = Math.max(0, this.actionLogScroll - 1);
         if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
+      } else if (key.name === 'f' && !key.ctrl) {
+        // 强制刷新重新计算终端尺寸
+        this.screen.width = process.stdout.columns || 80;
+        this.screen.height = process.stdout.rows || 24;
+        this.screen.forceFullNext();
+        if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
       }
     });
   }
@@ -624,7 +630,8 @@ export class GameUI {
         isHuman: p.isHuman || false,
         isRemote: p.isRemote || false,
         isYou: this.mySeatIdx >= 0 && p.id === this.mySeatIdx,
-        showCards: showAllCards || p.isHuman || (this.mySeatIdx >= 0 && p.id === this.mySeatIdx),
+        showCards: showAllCards || (this.mySeatIdx >= 0 && p.id === this.mySeatIdx),
+        isDisconnected: (p as any).isDisconnected || false,
       })),
       currentPlayerIndex: (state as any).currentPlayerIndex || 0,
       dealerIndex: (state as any).dealerIndex || 0,

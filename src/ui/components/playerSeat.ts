@@ -24,6 +24,7 @@ export interface PlayerSeatData {
   isRemote?: boolean;
   isYou?: boolean;
   showCards: boolean;
+  isDisconnected?: boolean;
 }
 
 export type SeatDensity = 'full' | 'compact' | 'slim' | 'minimal';
@@ -215,6 +216,7 @@ function buildBadges(data: PlayerSeatData, theme: Theme): string {
   if (data.isBigBlind) badges.push(themed('BB', theme.dim));
   if (data.isYou) badges.push(waveYouBadge(theme));
   if (data.isRemote) badges.push(themed('[网]', theme.accent));
+  if (data.isDisconnected) badges.push(themed('[离]', theme.warning));
   if (data.isAllIn) badges.push(themed('ALL-IN', theme.warning));
   return badges.join(' ');
 }

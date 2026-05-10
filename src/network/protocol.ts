@@ -14,7 +14,8 @@ import {
   PlayerActionPayload,
   ActionResultPayload,
   RenamePlayerPayload,
-  SeatOccupiedPayload
+  SeatOccupiedPayload,
+  SeatListPayload
 } from '../types/network';
 
 /**
@@ -170,6 +171,28 @@ export function createSeatOccupiedMessage(
 ): NetworkMessage {
   const payload: SeatOccupiedPayload = { seatIndex, playerName, isOccupied };
   return createMessage<SeatOccupiedPayload>(MessageType.SEAT_OCCUPIED, payload);
+}
+
+/**
+ * 创建座位列表请求消息
+ */
+export function createSeatListRequest(): NetworkMessage {
+  return createMessage(MessageType.SEAT_LIST_REQUEST, {});
+}
+
+/**
+ * 创建座位列表响应消息
+ */
+export function createSeatListResponse(seats: SeatListPayload['seats']): NetworkMessage {
+  const payload: SeatListPayload = { seats };
+  return createMessage<SeatListPayload>(MessageType.SEAT_LIST_RESPONSE, payload);
+}
+
+/**
+ * 创建服务器关停消息
+ */
+export function createServerShutdownMessage(reason: string): NetworkMessage {
+  return createMessage(MessageType.SERVER_SHUTDOWN, { reason });
 }
 
 /**

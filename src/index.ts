@@ -17,7 +17,9 @@ import {
   configureClient,
   selectSeatAndName,
   getInput,
-  getNumberInput
+  getNumberInput,
+  tuiClientSeatSelect,
+  tuiClientWaitForGame
 } from './ui/inputHandler';
 import { GameUI } from './ui/gameUI';
 import { centerVisual } from './ui/terminal';
@@ -28,7 +30,7 @@ import { Card, SUIT_SYMBOLS } from './types/card';
 import { RunMode, HostConfig, ClientConfig, SeatType, SerializedGameState } from './types/network';
 import { GameServer } from './network/server';
 import { GameClient } from './network/client';
-import { MenuUI } from './ui/menu/menuUI';
+import { MenuUI, getMenuContext } from './ui/menu/menuUI';
 import { tuiHostLobby, HostLobbySeat } from './ui/inputHandler';
 
 const STARTING_CHIPS = 1000;
@@ -183,6 +185,16 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
         seat.isOccupied = true;
         seat.name = playerName;
       }
+    } else if (gameUI && state) {
+      // 游戏中途加入
+      const player = state.players[seatIndex];
+      if (player) {
+        player.name = playerName;
+        player.isDisconnected = false;
+        gameUI.addSystemMessage(`${playerName} 加入座位 ${seatIndex + 1}`);
+        gameUI.renderGame(state);
+        gameServer!.broadcastGameState(state);
+      }
     }
   });
 
@@ -191,6 +203,20 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
       const seat = hostConfig.seats.find(s => s.index === seatIndex);
       if (seat && seat.type === SeatType.Remote) {
         seat.isOccupied = false;
+      }
+    } else if (gameUI && state) {
+      // 游戏中断连：标记离线，AI代打
+      const player = state.players[seatIndex];
+      if (player && player.isActive) {
+        player.isDisconnected = true;
+        // 如果正在等待该玩家，取消等待
+        if (remoteActionPromise) {
+          remoteActionPromise.resolve(null);
+          remoteActionPromise = null;
+        }
+        gameUI.addSystemMessage(`${player.name} 断线，AI代打`);
+        gameUI.renderGame(state);
+        gameServer!.broadcastGameState(state);
       }
     }
   });
@@ -234,7 +260,7 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
   // 创建游戏配置
   const llmAssignments = hostConfig.seats
     .filter(s => s.type === SeatType.LLM)
-    .map(s => ({ playerIndex: s.index, presetName: s.name }));
+    .map(s => ({ playerIndex: s.index, presetName: s.llmPresetName || s.name }));
 
   const aiDifficulties = new Map<number, AIDifficulty>();
   for (const seat of hostConfig.seats) {
@@ -294,8 +320,11 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
     }
 
     gameUI.renderGameOver(state);
+    gameServer.broadcastGameOver();
     gameServer.broadcastGameState(state);
   } finally {
+    // 关服前通知所有客户端
+    gameServer.broadcastServerShutdown('主机结束游戏');
     gameUI.destroy();
     gameUI = null;
   }
@@ -315,7 +344,10 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
   let currentGameState: SerializedGameState | null = null;
   let mySeatIndex = -1;
   let waitingForAction = false;
-  let gameStarted = false;
+  let justActed = false;
+  let prevPhase = '';
+  let gameEnded = false;
+  let serverShutdown = false;
 
   // 设置事件监听
   gameClient.on('connected', () => {
@@ -328,7 +360,16 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
     if (gameUI) {
       gameUI.showMessage(`已断开: ${reason}`);
     }
-    process.exit(0);
+  });
+
+  gameClient.on('game-over', () => {
+    gameEnded = true;
+    if (gameUI) gameUI.showMessage('游戏结束');
+  });
+
+  gameClient.on('server-shutdown', (reason) => {
+    serverShutdown = true;
+    if (gameUI) gameUI.showMessage(`服务器: ${reason}`);
   });
 
   gameClient.on('game-state', (gameState, seatIndex) => {
@@ -341,7 +382,23 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
       const isMyTurn = gameState.currentPlayerIndex === seatIndex;
       const myPlayer = gameState.players.find(p => p.id === seatIndex);
 
-      if (isMyTurn && myPlayer?.isActive && !myPlayer?.isAllIn && !waitingForAction) {
+      // 检测阶段切换
+      if (prevPhase && gameState.currentPhase !== prevPhase) {
+        const phaseLabels: Record<string, string> = {
+          preflop: '翻牌前', flop: '翻牌圈', turn: '转牌圈', river: '河牌圈', showdown: '摊牌'
+        };
+        const from = phaseLabels[prevPhase] || prevPhase;
+        const to = phaseLabels[gameState.currentPhase] || gameState.currentPhase;
+        gameUI.addSystemMessage(`${from} → ${to}`);
+      }
+      prevPhase = gameState.currentPhase;
+
+      // 不是自己回合时清除justActed标志（说明服务端已经切换到下个玩家）
+      if (!isMyTurn) {
+        justActed = false;
+      }
+
+      if (isMyTurn && myPlayer?.isActive && !myPlayer?.isAllIn && !waitingForAction && !justActed) {
         waitingForAction = true;
         gameUI.renderGame(gameState);
       } else {
@@ -365,16 +422,57 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
   // 等待连接稳定
   await new Promise(resolve => setTimeout(resolve, 500));
 
-  // 选择座位并加入
-  const seatIndex = await getNumberInput('输入要加入的座位号: ', 1, 8) - 1;
-  const playerName = await getInput('输入你的名称: ');
+  // 请求座位列表
+  let seats: { seatIndex: number; playerName: string; type: string; isOccupied: boolean }[] = [];
+  try {
+    seats = await new Promise<any[]>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('获取座位列表超时')), 10000);
+      const handler = (list: any[]) => {
+        clearTimeout(timeout);
+        resolve(list);
+      };
+      gameClient!.once('seat-list', handler);
+      gameClient!.requestSeatList();
+    });
+  } catch (e: any) {
+    throw new Error('无法获取房间信息: ' + e.message);
+  }
+
+  // 筛选可加入的座位（远程座位且未占用）
+  const availableRemoteSeats = seats.filter(s => s.type === 'remote' && !s.isOccupied);
+  if (availableRemoteSeats.length === 0) {
+    throw new Error('该房间没有可用座位');
+  }
+
+  // 显示可用座位供选择
+  let seatIndex: number;
+  let playerName: string;
+  if (getMenuContext()) {
+    const seatOptions = availableRemoteSeats.map(s =>
+      `座位 ${s.seatIndex + 1} (${s.playerName})`
+    );
+    const choice = await tuiClientSeatSelect(seatOptions);
+    if (choice === null) throw new Error('配置取消');
+    const chosenSeat = availableRemoteSeats[choice];
+    seatIndex = chosenSeat.seatIndex;
+    playerName = await getInput('输入你的名称: ');
+  } else {
+    console.log('\n  可用座位:');
+    availableRemoteSeats.forEach((s, i) => {
+      console.log(`    ${i + 1}. 座位 ${s.seatIndex + 1} (${s.playerName})`);
+    });
+    const choice = await getNumberInput('选择座位: ', 1, availableRemoteSeats.length);
+    const chosenSeat = availableRemoteSeats[choice - 1];
+    seatIndex = chosenSeat.seatIndex;
+    playerName = await getInput('输入你的名称: ');
+  }
 
   gameClient.joinGame(seatIndex, playerName);
 
   // 等待加入响应
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('加入超时')), 10000);
-    gameClient!.on('join-response', (success, message) => {
+    gameClient!.once('join-response', (success, message) => {
       clearTimeout(timeout);
       if (success) {
         resolve();
@@ -384,17 +482,18 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
     });
   });
 
-  // 等待游戏开始
-  // Pre-game interaction: simple enter-to-wait
-  await waitForEnter('按 Enter 等待游戏开始...');
+  // 客户端大厅 — 等待游戏开始（支持 Esc 退出）
+  const gameReady = await tuiClientWaitForGame(() => currentGameState !== null);
 
-  // Poll until game starts
-  while (gameClient.getIsConnected() && !gameStarted) {
-    if (currentGameState) {
-      gameStarted = true;
-      break;
-    }
-    await new Promise(resolve => setTimeout(resolve, 500));
+  if (!gameReady) {
+    // 用户主动退出
+    gameClient.disconnect();
+    return;
+  }
+
+  // 游戏已开始，状态已通过事件接收
+  if (!currentGameState) {
+    throw new Error('游戏状态异常：状态为空');
   }
 
   // 移交给GameUI
@@ -404,23 +503,36 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
   gameUI.init();
 
   try {
-    if (currentGameState) {
-      gameUI.renderGame(currentGameState);
+    // 检查是否轮到我们（可能在 UI 初始化前已收到状态）
+    const gs: SerializedGameState = currentGameState!;
+    const isMyTurn = gs.currentPlayerIndex === mySeatIndex;
+    const myPlayer = gs.players.find(p => p.id === mySeatIndex);
+    if (isMyTurn && myPlayer?.isActive && !myPlayer?.isAllIn) {
+      waitingForAction = true;
     }
+    prevPhase = gs.currentPhase;
+    gameUI.renderGame(gs);
 
-    while (gameClient.getIsConnected()) {
+    while (gameClient.getIsConnected() && !gameEnded && !serverShutdown) {
       if (waitingForAction && currentGameState) {
         const availableActions = getAvailableActionsFromState(currentGameState, mySeatIndex);
         if (availableActions.length > 0) {
           try {
             const action = await gameUI.waitForAction(availableActions);
             gameClient.sendAction(action.action, action.amount);
+            // 标记已行动，防止被同一playerIndex的状态再次触发
+            justActed = true;
+            waitingForAction = false;
           } catch {
             // 输入错误，继续等待
           }
         }
       }
       await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    if (currentGameState) {
+      gameUI.renderGameOver(currentGameState);
     }
   } finally {
     gameUI.destroy();
@@ -476,73 +588,101 @@ async function playBettingRoundHost(state: GameState, llmPresetMap: Map<string, 
     const player = getCurrentPlayer(state);
 
     if (player.isActive && !player.isAllIn) {
+      // 同步远程玩家连接状态（离线标记）
+      for (const p of state.players) {
+        const s = hostConfig.seats[p.id];
+        if (s?.type === SeatType.Remote) {
+          p.isDisconnected = !gameServer!.isSeatConnected(p.id);
+        }
+      }
+
       gameUI!.renderGame(state);
       gameServer!.broadcastGameState(state);
 
       // 检查是否是远程玩家
       const seatConfig = hostConfig.seats[player.id];
       const isRemotePlayer = seatConfig?.type === SeatType.Remote;
+      const isRemoteConnected = isRemotePlayer
+        && gameServer!.isSeatConnected(player.id)
+        && !player.isDisconnected;
 
-      if (isRemotePlayer) {
-        // 等待远程玩家动作
+      let actionTaken = false;
+
+      if (isRemoteConnected) {
+        // 已连接的远程玩家 — 等待行动
         gameUI!.showMessage(`等待 ${player.name} 行动`);
         gameServer!.waitForPlayerAction(player.id);
 
-        const action = await waitForRemoteAction();
+        const remoteAction = await waitForRemoteAction();
 
-        if (action) {
+        if (remoteAction) {
           const toCall = state.currentBet - player.currentBet;
           const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
-          const success = executeAction(state, action.action, action.amount);
-          gameServer!.sendActionResult(player.id, success, action.action, action.amount);
+          const success = executeAction(state, remoteAction.action, remoteAction.amount);
+          gameServer!.sendActionResult(player.id, success, remoteAction.action, remoteAction.amount);
 
           if (success) {
-            recordPlayerAction(player.id, action.action, toCall, potBefore);
-            gameUI!.showAction(player.name, action.action, action.amount);
+            recordPlayerAction(player.id, remoteAction.action, toCall, potBefore);
+            gameUI!.showAction(player.name, remoteAction.action, remoteAction.amount);
             gameUI!.renderGame(state);
             gameServer!.broadcastGameState(state);
-            logger.logGameAction(player.name, action.action, action.amount);
+            logger.logGameAction(player.name, remoteAction.action, remoteAction.amount);
+            actionTaken = true;
           }
+        } else {
+          // 超时 — 断开连接，标记离线
+          player.isDisconnected = true;
+          gameUI!.addSystemMessage(`${player.name} 行动超时（60s），AI代打`);
+          gameServer!.sendActionResult(player.id, false, PlayerAction.Fold, 0, '行动超时，已断开');
+          gameServer!.cancelWaitForPlayerAction(player.id);
+          gameServer!.disconnectSeat(player.id);
+          // actionTaken保持false，走AI分支
         }
-      } else if (player.isHuman) {
-        // 主机玩家
-        const action = await gameUI!.waitForAction(getAvailableActions(state));
+      }
 
-        if (action) {
+      // 主机玩家
+      if (!actionTaken && player.isHuman) {
+        const hostAction = await gameUI!.waitForAction(getAvailableActions(state));
+
+        if (hostAction) {
           const toCall = state.currentBet - player.currentBet;
           const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
-          const success = executeAction(state, action.action, action.amount);
+          const success = executeAction(state, hostAction.action, hostAction.amount);
 
           if (success) {
-            recordPlayerAction(player.id, action.action, toCall, potBefore);
-            gameUI!.showAction(player.name, action.action, action.amount);
+            recordPlayerAction(player.id, hostAction.action, toCall, potBefore);
+            gameUI!.showAction(player.name, hostAction.action, hostAction.amount);
             gameUI!.renderGame(state);
             gameServer!.broadcastGameState(state);
-            logger.logGameAction(player.name, action.action, action.amount);
+            logger.logGameAction(player.name, hostAction.action, hostAction.amount);
+            actionTaken = true;
           }
         }
-      } else {
-        // AI 玩家
+      }
+
+      // AI/LLM 或 超时/断线的远程玩家
+      if (!actionTaken && !player.isHuman && player.isActive && !player.isAllIn) {
         const thinkingMessage = player.llmPresetName
           ? `[LLM] ${player.name} 正在思考`
           : `${player.name} 正在思考`;
         gameUI!.startWaitAnimation(thinkingMessage);
 
-        const action = await getAction(state, player, llmPresetMap);
+        const aiAction = await getAction(state, player, llmPresetMap);
 
         gameUI!.stopWaitAnimation();
 
-        if (action) {
+        if (aiAction) {
           const toCall = state.currentBet - player.currentBet;
           const potBefore = state.pot + state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
-          const success = executeAction(state, action.action, action.amount);
+          const success = executeAction(state, aiAction.action, aiAction.amount);
 
           if (success) {
-            recordPlayerAction(player.id, action.action, toCall, potBefore);
-            gameUI!.showAction(player.name, action.action, action.amount);
+            recordPlayerAction(player.id, aiAction.action, toCall, potBefore);
+            gameUI!.showAction(player.name, aiAction.action, aiAction.amount);
             gameUI!.renderGame(state);
             gameServer!.broadcastGameState(state);
-            logger.logGameAction(player.name, action.action, action.amount);
+            logger.logGameAction(player.name, aiAction.action, aiAction.amount);
+            actionTaken = true;
           }
         }
       }

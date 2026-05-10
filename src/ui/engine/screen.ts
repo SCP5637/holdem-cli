@@ -86,9 +86,10 @@ export class Screen {
     this.lines = [];
   }
 
-  /** 强制下一次render()使用全量渲染(用于resize后) */
+  /** 强制下一次render()使用全量渲染(用于resize后)，同时清空prevLines防止旧尺寸buffer污染 */
   forceFullNext(): void {
     this.forceFullRender = true;
+    this.prevLines = [];
   }
 
   /** 提交渲染: 逐行diff，只输出变化行 */
@@ -99,10 +100,13 @@ export class Screen {
       return;
     }
 
-    const maxLines = Math.max(this.lines.length, this.prevLines.length);
+    const renderLines = Math.min(
+      Math.max(this.lines.length, this.prevLines.length),
+      this.height
+    );
     const writes: string[] = [];
 
-    for (let i = 0; i < maxLines; i++) {
+    for (let i = 0; i < renderLines; i++) {
       const cur = this.lines[i] || '';
       const prev = this.prevLines[i] || '';
 
@@ -122,12 +126,19 @@ export class Screen {
   /** 强制全量渲染(不用diff，不滚动) */
   renderFull(): void {
     process.stdout.write(cursorTo(1, 1));
-    const maxLines = Math.max(this.lines.length, this.prevLines.length);
-    for (let i = 0; i < maxLines; i++) {
+    const renderLines = Math.min(
+      Math.max(this.lines.length, this.prevLines.length),
+      this.height
+    );
+    for (let i = 0; i < renderLines; i++) {
       process.stdout.write(clearLine() + (this.lines[i] || ''));
-      if (i < maxLines - 1) {
+      if (i < renderLines - 1) {
         process.stdout.write('\n');
       }
+    }
+    // 清除可能残留的旧行
+    for (let i = renderLines; i < this.height; i++) {
+      process.stdout.write('\n' + clearLine());
     }
     this.prevLines = [...this.lines];
     this.lines = [];

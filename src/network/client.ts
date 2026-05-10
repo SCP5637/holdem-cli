@@ -13,7 +13,8 @@ import {
   JoinResponsePayload,
   GameStatePayload,
   ActionResultPayload,
-  PlayerLeftPayload
+  PlayerLeftPayload,
+  SeatListPayload
 } from '../types/network';
 import { PlayerAction } from '../types/game';
 import {
@@ -22,7 +23,8 @@ import {
   createJoinRequest,
   createPlayerActionMessage,
   createRenameMessage,
-  createPingMessage
+  createPingMessage,
+  createSeatListRequest
 } from './protocol';
 
 export interface ClientEvents {
@@ -33,7 +35,9 @@ export interface ClientEvents {
   'player-joined': (seatIndex: number, playerName: string) => void;
   'player-left': (seatIndex: number, reason: string) => void;
   'action-result': (success: boolean, message?: string) => void;
-  'seat-list': (seats: { seatIndex: number; playerName: string; isOccupied: boolean }[]) => void;
+  'seat-list': (seats: SeatListPayload['seats']) => void;
+  'game-over': () => void;
+  'server-shutdown': (reason: string) => void;
   'error': (error: Error | string) => void;
 }
 
@@ -165,8 +169,7 @@ export class GameClient extends EventEmitter {
       return;
     }
 
-    // 使用 PING 消息类型作为请求座位列表的信号
-    this.socket.write(encodeMessage(createPingMessage()));
+    this.socket.write(encodeMessage(createSeatListRequest()));
   }
 
   /**
@@ -215,6 +218,11 @@ export class GameClient extends EventEmitter {
         this.handleGameState(message.payload as GameStatePayload);
         break;
 
+      case MessageType.SEAT_LIST_RESPONSE:
+        const seatListPayload = message.payload as SeatListPayload;
+        this.emit('seat-list', seatListPayload.seats);
+        break;
+
       case MessageType.PLAYER_JOINED:
         const joinedPayload = message.payload as { seatIndex: number; playerName: string };
         console.log(`  [加入] 玩家 ${joinedPayload.playerName} 坐在 ${joinedPayload.seatIndex + 1} 号位`);
@@ -229,6 +237,15 @@ export class GameClient extends EventEmitter {
 
       case MessageType.ACTION_RESULT:
         this.handleActionResult(message.payload as ActionResultPayload);
+        break;
+
+      case MessageType.GAME_END:
+        this.emit('game-over');
+        break;
+
+      case MessageType.SERVER_SHUTDOWN:
+        const shutdownPayload = message.payload as { reason: string };
+        this.emit('server-shutdown', shutdownPayload.reason || '服务器已关闭');
         break;
 
       case MessageType.PONG:

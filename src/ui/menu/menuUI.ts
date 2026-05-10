@@ -14,6 +14,7 @@ export interface MenuContext {
   input: InputHandler;
   theme: Theme;
   setRender: (fn: (() => void) | null) => void;
+  getRender: () => (() => void) | null;
 }
 
 let activeContext: MenuContext | null = null;
@@ -58,11 +59,24 @@ export class MenuUI {
     };
     this.screen.onResize(this.resizeHandler);
 
+    // F键强制重绘 — 对所有菜单页生效
+    this.input.onKey((key) => {
+      if (key.name === 'f' && !key.ctrl) {
+        this.screen.width = process.stdout.columns || 80;
+        this.screen.height = process.stdout.rows || 24;
+        this.screen.forceFullNext();
+        if (this.currentRender) {
+          this.currentRender();
+        }
+      }
+    });
+
     activeContext = {
       screen: this.screen,
       input: this.input,
       theme: this.theme,
-      setRender: (fn) => { this.currentRender = fn; }
+      setRender: (fn) => { this.currentRender = fn; },
+      getRender: () => this.currentRender
     };
   }
 

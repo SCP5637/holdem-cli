@@ -63,6 +63,7 @@ export interface Player {
   currentBet: number;
   hasActed: boolean;
   isAllIn: boolean;
+  isDisconnected?: boolean;
 }
 
 /**

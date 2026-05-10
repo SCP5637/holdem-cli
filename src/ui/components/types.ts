@@ -14,4 +14,5 @@ export interface PlayerSeatVM {
   isRemote?: boolean;
   isYou?: boolean;
   showCards?: boolean;
+  isDisconnected?: boolean;
 }

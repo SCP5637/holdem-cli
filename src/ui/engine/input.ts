@@ -4,12 +4,29 @@
  * 与配置阶段readline残留状态冲突导致keypress事件不触发
  */
 
+import { execSync } from 'child_process';
+
 export interface KeyEvent {
   name: string;
   sequence: string;
   ctrl: boolean;
   meta: boolean;
   shift: boolean;
+}
+
+/** 读取系统剪切板 */
+function readClipboard(): string {
+  try {
+    if (process.platform === 'win32') {
+      return execSync('powershell -command "Get-Clipboard"', { encoding: 'utf8', timeout: 3000 }).trim();
+    } else if (process.platform === 'darwin') {
+      return execSync('pbpaste', { encoding: 'utf8', timeout: 3000 }).trim();
+    } else {
+      return execSync('xclip -selection clipboard -o 2>/dev/null || xsel --clipboard --output 2>/dev/null', { encoding: 'utf8', shell: '/bin/bash', timeout: 3000 }).trim();
+    }
+  } catch {
+    return '';
+  }
 }
 
 type KeyCallback = (key: KeyEvent) => void;
@@ -210,6 +227,31 @@ export class InputHandler {
           return;
         }
 
+        // Ctrl+V 粘贴
+        if (key.name === 'ctrl+v' || (key.ctrl && key.name === 'v')) {
+          const clip = readClipboard();
+          if (clip) {
+            const clean = clip.replace(/[\r\n\t]/g, ' ').replace(/[^\x20-\x7e]/g, '');
+            const available = maxLen - text.length;
+            if (available > 0) {
+              text += clean.slice(0, available);
+              if (onChange) onChange(text);
+            }
+          }
+          return;
+        }
+
+        // 批量粘贴 (Shift+Insert等终端原生粘贴，buffer含多字符)
+        if (key.name.length > 1 && !key.ctrl && !key.meta) {
+          const clean = key.name.replace(/[\r\n\t]/g, ' ').replace(/[^\x20-\x7e]/g, '');
+          const available = maxLen - text.length;
+          if (available > 0 && clean.length > 0) {
+            text += clean.slice(0, available);
+            if (onChange) onChange(text);
+          }
+          return;
+        }
+
         // 可打印字符 (字母、数字、常见符号)
         if (text.length < maxLen && key.name.length === 1) {
           const ch = key.name.charCodeAt(0);
@@ -239,6 +281,11 @@ export class InputHandler {
     // Ctrl+C (0x03)
     if (buf[0] === 0x03) {
       return { name: 'c', sequence: '\x03', ctrl: true, meta: false, shift: false };
+    }
+
+    // Ctrl+V paste (0x16)
+    if (buf[0] === 0x16) {
+      return { name: 'ctrl+v', sequence: '\x16', ctrl: true, meta: false, shift: false };
     }
 
     // Enter (0x0D)

@@ -25,7 +25,10 @@ import {
   createActionResult,
   createSeatOccupiedMessage,
   createPongMessage,
-  createErrorMessage
+  createErrorMessage,
+  createSeatListResponse,
+  createServerShutdownMessage,
+  createMessage
 } from './protocol';
 import { GameState, PlayerAction } from '../types/game';
 
@@ -148,6 +151,10 @@ export class GameServer extends EventEmitter {
 
       case MessageType.RENAME_PLAYER:
         this.handleRenamePlayer(message.payload as RenamePlayerPayload);
+        break;
+
+      case MessageType.SEAT_LIST_REQUEST:
+        this.handleSeatListRequest(socket);
         break;
 
       case MessageType.PING:
@@ -284,6 +291,25 @@ export class GameServer extends EventEmitter {
   }
 
   /**
+   * 处理座位列表请求
+   */
+  private handleSeatListRequest(socket: net.Socket): void {
+    if (!this.config) {
+      socket.write(encodeMessage(createErrorMessage('服务器未配置')));
+      return;
+    }
+
+    const seats = this.config.seats.map(s => ({
+      seatIndex: s.index,
+      playerName: s.name,
+      type: s.type,
+      isOccupied: s.isOccupied
+    }));
+
+    socket.write(encodeMessage(createSeatListResponse(seats)));
+  }
+
+  /**
    * 处理 Ping
    */
   private handlePing(socket: net.Socket): void {
@@ -305,6 +331,16 @@ export class GameServer extends EventEmitter {
             seat.isOccupied = false;
             seat.socketId = undefined;
           }
+        }
+
+        // 如果正在游戏中，标记玩家为断开（AI代打，不弃牌）
+        if (this.currentGameState) {
+          const player = this.currentGameState.players[seatIndex];
+          if (player && player.isActive) {
+            player.isDisconnected = true;
+          }
+          // 如果正在等待该玩家，取消等待
+          this.waitingForAction.delete(seatIndex);
         }
 
         console.log(`  [离开] 玩家 ${client.name} 断开连接`);
@@ -330,6 +366,20 @@ export class GameServer extends EventEmitter {
   }
 
   /**
+   * 广播关服通知并断开所有客户端
+   */
+  broadcastServerShutdown(reason: string): void {
+    const shutdownMsg = encodeMessage(createServerShutdownMessage(reason));
+    for (const client of this.clients.values()) {
+      if (client.isConnected) {
+        client.socket.write(shutdownMsg);
+        client.socket.end();
+      }
+    }
+    this.clients.clear();
+  }
+
+  /**
    * 发送消息给特定客户端
    */
   sendTo(seatIndex: number, message: NetworkMessage): void {
@@ -351,6 +401,14 @@ export class GameServer extends EventEmitter {
   }
 
   /**
+   * 广播游戏结束
+   */
+  broadcastGameOver(): void {
+    const msg = createMessage(MessageType.GAME_END, {});
+    this.broadcast(msg);
+  }
+
+  /**
    * 发送游戏状态给特定客户端
    */
   private sendGameStateToClient(client: RemotePlayer, gameState?: GameState): void {
@@ -365,17 +423,20 @@ export class GameServer extends EventEmitter {
   /**
    * 等待玩家动作
    */
-  waitForPlayerAction(seatIndex: number): void {
+  waitForPlayerAction(seatIndex: number): boolean {
+    const client = this.clients.get(seatIndex);
+    if (!client) {
+      // 该座位没有连接客户端，不需要等待
+      return false;
+    }
+
     this.waitingForAction.add(seatIndex);
 
     // 通知客户端轮到其行动
-    const client = this.clients.get(seatIndex);
-    if (client) {
-      // 客户端通过接收游戏状态知道轮到自己
-      if (this.currentGameState) {
-        this.sendGameStateToClient(client);
-      }
+    if (this.currentGameState) {
+      this.sendGameStateToClient(client);
     }
+    return true;
   }
 
   /**
@@ -383,6 +444,29 @@ export class GameServer extends EventEmitter {
    */
   cancelWaitForPlayerAction(seatIndex: number): void {
     this.waitingForAction.delete(seatIndex);
+  }
+
+  /**
+   * 断开指定座位的客户端
+   */
+  disconnectSeat(seatIndex: number): void {
+    const client = this.clients.get(seatIndex);
+    if (client) {
+      client.isConnected = false;
+      client.socket.end();
+      this.clients.delete(seatIndex);
+      // 直接清理座位配置，handleDisconnect找不到client会跳过
+      if (this.config) {
+        const seat = this.config.seats[seatIndex];
+        if (seat) {
+          seat.isOccupied = false;
+          seat.socketId = undefined;
+        }
+      }
+      // 广播玩家离开
+      this.broadcast(createPlayerLeft(seatIndex, '玩家断开连接'));
+      this.emit('player-left', seatIndex, '玩家断开连接');
+    }
   }
 
   /**
@@ -434,7 +518,8 @@ export class GameServer extends EventEmitter {
         isRemote: p.id !== viewerSeatIndex && p.isHuman,
         currentBet: p.currentBet,
         hasActed: p.hasActed,
-        isAllIn: p.isAllIn
+        isAllIn: p.isAllIn,
+        isDisconnected: p.isDisconnected ?? false
       })),
       communityCards: gameState.communityCards.map(c => ({ suit: c.suit, rank: c.rank })),
       pot: gameState.pot,
@@ -449,7 +534,16 @@ export class GameServer extends EventEmitter {
       bigBlind: gameState.bigBlind,
       currentBet: gameState.currentBet,
       minRaise: gameState.minRaise,
-      handNumber: gameState.handNumber
+      handNumber: gameState.handNumber,
+      actionLog: gameState.actionLog.map(a => ({
+        handNumber: a.handNumber,
+        phase: a.phase,
+        playerId: a.playerId,
+        playerName: a.playerName,
+        action: a.action,
+        amount: a.amount,
+        time: a.time
+      }))
     };
   }
 }

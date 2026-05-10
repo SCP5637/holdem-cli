@@ -34,6 +34,10 @@ export enum MessageType {
   RENAME_PLAYER = 'rename_player',
   SEAT_OCCUPIED = 'seat_occupied',
 
+  // 座位列表
+  SEAT_LIST_REQUEST = 'seat_list_request',
+  SEAT_LIST_RESPONSE = 'seat_list_response',
+
   // 游戏控制
   GAME_START = 'game_start',
   GAME_END = 'game_end',
@@ -44,7 +48,8 @@ export enum MessageType {
   PING = 'ping',
   PONG = 'pong',
   DISCONNECT = 'disconnect',
-  ERROR = 'error'
+  ERROR = 'error',
+  SERVER_SHUTDOWN = 'server_shutdown'
 }
 
 /**
@@ -136,6 +141,31 @@ export interface SeatOccupiedPayload {
 }
 
 /**
+ * 座位列表请求/响应
+ */
+export interface SeatListPayload {
+  seats: {
+    seatIndex: number;
+    playerName: string;
+    type: string;
+    isOccupied: boolean;
+  }[];
+}
+
+/**
+ * 序列化的动作记录
+ */
+export interface SerializedActionRecord {
+  handNumber: number;
+  phase: string;
+  playerId: number;
+  playerName: string;
+  action: string;
+  amount?: number;
+  time: string;
+}
+
+/**
  * 序列化的游戏状态（可JSON序列化）
  */
 export interface SerializedGameState {
@@ -151,6 +181,7 @@ export interface SerializedGameState {
   currentBet: number;
   minRaise: number;
   handNumber: number;
+  actionLog: SerializedActionRecord[];
 }
 
 /**
@@ -167,6 +198,7 @@ export interface SerializedPlayer {
   currentBet: number;
   hasActed: boolean;
   isAllIn: boolean;
+  isDisconnected: boolean;
 }
 
 /**
@@ -195,6 +227,7 @@ export interface SeatConfig {
   isOccupied: boolean;
   socketId?: string;
   aiDifficulty?: AIDifficulty;
+  llmPresetName?: string;
 }
 
 /**
