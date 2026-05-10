@@ -24,7 +24,8 @@ import {
   createPlayerActionMessage,
   createRenameMessage,
   createPingMessage,
-  createSeatListRequest
+  createSeatListRequest,
+  createRequestStateMessage
 } from './protocol';
 
 export interface ClientEvents {
@@ -134,6 +135,14 @@ export class GameClient extends EventEmitter {
   /**
    * 发送玩家动作
    */
+  /**
+   * 请求服务端重新发送当前游戏状态
+   */
+  requestStateRefresh(): void {
+    if (!this.isConnected || !this.socket) return;
+    this.socket.write(encodeMessage(createRequestStateMessage()));
+  }
+
   sendAction(action: PlayerAction, amount?: number): void {
     if (!this.isConnected || !this.socket) {
       this.emit('error', '未连接到服务器');

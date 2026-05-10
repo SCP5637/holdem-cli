@@ -62,6 +62,8 @@ export class GameUI {
   private overlayState: OverlayState = { type: 'none' };
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private actionLogScroll = 0;
+  /** 联机模式下按F触发刷新回调（请求服务端重发状态） */
+  onRemoteRefresh: (() => void) | null = null;
   private waitFrame = 0;
   private waitTimer: ReturnType<typeof setInterval> | null = null;
   private waitMsg = '';
@@ -93,6 +95,9 @@ export class GameUI {
         this.screen.width = process.stdout.columns || 80;
         this.screen.height = process.stdout.rows || 24;
         this.screen.forceFullNext();
+        if (this.onRemoteRefresh) {
+          this.onRemoteRefresh();
+        }
         if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
       }
     });

@@ -142,6 +142,7 @@ async function runLocalGame(menuUI: MenuUI): Promise<void> {
   // 移交给GameUI
   const { screen, input } = menuUI.transfer();
   gameUI = new GameUI(screen, input);
+  gameUI.setMySeat(humanPosition);
   gameUI.init();
 
   try {
@@ -297,6 +298,7 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
   // 移交给GameUI
   const { screen, input } = menuUI.transfer();
   gameUI = new GameUI(screen, input);
+  gameUI.setMySeat(hostConfig.hostSeatIndex);
   gameUI.init();
 
   try {
@@ -398,11 +400,12 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
         justActed = false;
       }
 
+      const isShowdown = gameState.currentPhase === 'showdown';
       if (isMyTurn && myPlayer?.isActive && !myPlayer?.isAllIn && !waitingForAction && !justActed) {
         waitingForAction = true;
-        gameUI.renderGame(gameState);
+        gameUI.renderGame(gameState, isShowdown);
       } else {
-        gameUI.renderGame(gameState);
+        gameUI.renderGame(gameState, isShowdown);
       }
     }
   });
@@ -500,6 +503,12 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
   const { screen, input } = menuUI.transfer();
   gameUI = new GameUI(screen, input);
   if (mySeatIndex >= 0) gameUI.setMySeat(mySeatIndex);
+  // 联机模式下 F 键刷新请求服务端重发当前状态
+  gameUI.onRemoteRefresh = () => {
+    if (gameClient && gameClient.getIsConnected()) {
+      gameClient.requestStateRefresh();
+    }
+  };
   gameUI.init();
 
   try {
@@ -511,7 +520,7 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
       waitingForAction = true;
     }
     prevPhase = gs.currentPhase;
-    gameUI.renderGame(gs);
+    gameUI.renderGame(gs, gs.currentPhase === 'showdown');
 
     while (gameClient.getIsConnected() && !gameEnded && !serverShutdown) {
       if (waitingForAction && currentGameState) {
@@ -741,9 +750,9 @@ async function resolveHandHost(state: GameState): Promise<void> {
 
   gameUI!.renderGame(state, true);
   gameUI!.renderHandResult(winners, handDescriptions, state);
-  gameServer!.broadcastGameState(state);
 
   awardPot(state, winners);
+  gameServer!.broadcastGameState(state);
 
   await gameUI!.waitForEnter();
 }

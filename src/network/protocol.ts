@@ -210,6 +210,13 @@ export function createPongMessage(): NetworkMessage {
 }
 
 /**
+ * 创建请求状态刷新消息
+ */
+export function createRequestStateMessage(): NetworkMessage {
+  return createMessage(MessageType.REQUEST_STATE, {});
+}
+
+/**
  * 创建错误消息
  */
 export function createErrorMessage(error: string): NetworkMessage {

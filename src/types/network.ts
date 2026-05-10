@@ -47,6 +47,7 @@ export enum MessageType {
   // 控制消息
   PING = 'ping',
   PONG = 'pong',
+  REQUEST_STATE = 'request_state',
   DISCONNECT = 'disconnect',
   ERROR = 'error',
   SERVER_SHUTDOWN = 'server_shutdown'

@@ -161,6 +161,10 @@ export class GameServer extends EventEmitter {
         this.handlePing(socket);
         break;
 
+      case MessageType.REQUEST_STATE:
+        this.handleRequestState(socket);
+        break;
+
       default:
         console.log(`  [警告] 收到未知消息类型: ${message.type}`);
     }
@@ -314,6 +318,20 @@ export class GameServer extends EventEmitter {
    */
   private handlePing(socket: net.Socket): void {
     socket.write(encodeMessage(createPongMessage()));
+  }
+
+  /**
+   * 处理客户端请求状态刷新
+   */
+  private handleRequestState(socket: net.Socket): void {
+    for (const client of this.clients.values()) {
+      if (client.socket === socket && client.isConnected) {
+        if (this.currentGameState) {
+          this.sendGameStateToClient(client);
+        }
+        break;
+      }
+    }
   }
 
   /**
