@@ -4,6 +4,7 @@
  */
 
 import { Card, Suit, Rank, SUIT_SYMBOLS, SUIT_COLORS, RESET_COLOR } from '../types/card';
+import { PluginManager } from '../plugins/manager';
 
 /**
  * 获取卡牌点数的显示字符
@@ -24,6 +25,9 @@ function getRankDisplay(rank: Rank): string {
  * @returns 表示卡牌各行的字符串数组
  */
 export function renderCard(card: Card, hidden: boolean = false): string[] {
+  const hookR = PluginManager.hook('renderCard', { card, hidden, mode: 'full' });
+  if (hookR) return hookR as string[];
+
   if (hidden) {
     return [
       '┌─────┐',
@@ -83,6 +87,9 @@ export function renderCards(cards: Card[], hiddenIndices: number[] = []): string
  * @returns 简单的字符串表示
  */
 export function renderCardSimple(card: Card): string {
+  const hookR = PluginManager.hook('renderCard', { card, hidden: false, mode: 'simple' });
+  if (hookR) return hookR as string;
+
   const suit = SUIT_SYMBOLS[card.suit];
   const color = SUIT_COLORS[card.suit];
   const reset = RESET_COLOR;
@@ -102,6 +109,9 @@ export function renderCardsSimple(cards: Card[]): string {
  * 紧凑2行卡牌渲染（中等宽度布局用）
  */
 export function renderCardCompact(card: Card, hidden: boolean = false): string[] {
+  const hookR = PluginManager.hook('renderCard', { card, hidden, mode: 'compact' });
+  if (hookR) return hookR as string[];
+
   if (hidden) {
     return [
       '┌───┐',
@@ -147,6 +157,8 @@ export function renderCardsCompact(cards: Card[], hiddenIndices: number[] = []):
  */
 export function renderCardLabel(card: Card, hidden: boolean = false): string {
   if (hidden) return '[?]';
+  const hookR = PluginManager.hook('renderCard', { card, hidden: false, mode: 'label' });
+  if (hookR) return hookR as string;
   const suit = SUIT_SYMBOLS[card.suit];
   const color = SUIT_COLORS[card.suit];
   const reset = RESET_COLOR;

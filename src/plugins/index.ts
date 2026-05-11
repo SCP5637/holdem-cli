@@ -1,11 +1,12 @@
 /**
  * 插件注册表
  * 统一管理所有变体/插件，包含兼容性冲突自动解决
+ * 导入每个插件的module以触发LOOKUP注册
  */
 
 import { VariantDef } from './types';
 import arcade from './0-arcade';
-import glassCards from './1-glassCards';
+import glassCards, { module as _glassCardsModule } from './1-glassCards';
 import fogOfWar from './2-fogOfWar';
 import reverseFog from './3-reverseFog';
 import peopleReading from './4-peopleReading';

@@ -234,7 +234,10 @@ export class GameUI {
         return renderWaitPanel(0, msg, this.theme, width, height);
       }
       default:
-        return renderWaitPanel(this.waitFrame, this.waitMsg, this.theme, width, height);
+        if (this.waitTimer) {
+          return renderWaitPanel(this.waitFrame, this.waitMsg, this.theme, width, height);
+        }
+        return Array(height).fill('');
     }
   }
 
@@ -347,6 +350,7 @@ export class GameUI {
       clearInterval(this.waitTimer);
       this.waitTimer = null;
     }
+    this.waitMsg = '';
     this.screen.forceFullNext();
   }
 

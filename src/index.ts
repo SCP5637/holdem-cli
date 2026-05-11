@@ -33,6 +33,7 @@ import { GameServer } from './network/server';
 import { GameClient } from './network/client';
 import { MenuUI, getMenuContext } from './ui/menu/menuUI';
 import { tuiHostLobby, HostLobbySeat } from './ui/inputHandler';
+import { PluginManager } from './plugins/manager';
 
 const STARTING_CHIPS = 1000;
 const SMALL_BLIND = 10;
@@ -769,6 +770,8 @@ async function waitForRemoteAction(): Promise<{ action: PlayerAction; amount?: n
  */
 async function resolveHandHost(state: GameState): Promise<void> {
   const winners = determineHandWinners(state);
+  PluginManager.hook('onHandResolve', state, winners);
+
   const activePlayers = state.players.filter(p => p.isActive);
 
   if (activePlayers.length === 1) {
@@ -931,6 +934,8 @@ async function getAction(state: GameState, player: Player, llmPresetMap: Map<str
 
 async function resolveHand(state: GameState): Promise<void> {
   const winners = determineHandWinners(state);
+  PluginManager.hook('onHandResolve', state, winners);
+
   const activePlayers = state.players.filter(p => p.isActive);
 
   if (activePlayers.length === 1) {

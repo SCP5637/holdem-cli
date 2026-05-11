@@ -48,7 +48,8 @@ export class InputHandler {
     this.dataHandler = (buf: Buffer) => {
       const evt = this.parseData(buf);
       if (!evt) return;
-      for (const cb of this.keyCallbacks) {
+      // 遍历副本：回调中可能 splice 自删，避免跳过后续 handler
+      for (const cb of [...this.keyCallbacks]) {
         cb(evt);
       }
     };

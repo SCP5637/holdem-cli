@@ -8,6 +8,7 @@ import { Card } from '../types/card';
 import { createShuffledDeck, dealCards } from './deck';
 import { evaluateHand, determineWinners } from './handEvaluator';
 import { getRandomStrategy } from './ai/index';
+import { PluginManager } from '../plugins/manager';
 
 /**
  * 使用指定配置创建新游戏
@@ -86,6 +87,13 @@ export function createGame(config: GameConfig): GameState {
   dealHoleCards(state);
   setFirstToAct(state);
 
+  // 初始化插件管理器（先销毁旧实例）
+  PluginManager.destroy();
+  if (config.enabledVariants && config.enabledVariants.length > 0) {
+    PluginManager.init(config.enabledVariants);
+    PluginManager.hook('onGameStart');
+  }
+
   return state;
 }
 
@@ -94,11 +102,30 @@ export function createGame(config: GameConfig): GameState {
  * @param state - 当前游戏状态
  */
 function postBlinds(state: GameState): void {
-  const smallBlindIndex = (state.dealerIndex + 1) % state.players.length;
-  const bigBlindIndex = (state.dealerIndex + 2) % state.players.length;
+  const numPlayers = state.players.length;
 
-  placeBet(state, smallBlindIndex, state.smallBlind);
-  placeBet(state, bigBlindIndex, state.bigBlind);
+  // 寻找第一个活跃玩家作为小盲
+  let sbIndex = (state.dealerIndex + 1) % numPlayers;
+  let attempts = 0;
+  while (!state.players[sbIndex].isActive && attempts < numPlayers) {
+    sbIndex = (sbIndex + 1) % numPlayers;
+    attempts++;
+  }
+
+  // 寻找小盲之后的下一个活跃玩家作为大盲
+  let bbIndex = (sbIndex + 1) % numPlayers;
+  attempts = 0;
+  while ((!state.players[bbIndex].isActive || bbIndex === sbIndex) && attempts < numPlayers) {
+    bbIndex = (bbIndex + 1) % numPlayers;
+    attempts++;
+  }
+
+  if (state.players[sbIndex].isActive) {
+    placeBet(state, sbIndex, state.smallBlind);
+  }
+  if (state.players[bbIndex].isActive && bbIndex !== sbIndex) {
+    placeBet(state, bbIndex, state.bigBlind);
+  }
 
   state.currentBet = state.bigBlind;
 }
@@ -156,11 +183,12 @@ function skipInactivePlayers(state: GameState): void {
 function placeBet(state: GameState, playerIndex: number, amount: number): void {
   const player = state.players[playerIndex];
   const actualBet = Math.min(amount, player.chips);
+  const hadChips = player.chips > 0;
 
   player.chips -= actualBet;
   player.currentBet += actualBet;
 
-  if (player.chips === 0) {
+  if (hadChips && player.chips === 0) {
     player.isAllIn = true;
   }
 
@@ -231,7 +259,7 @@ function calculateSidePots(state: GameState): void {
 
     if (allInPlayers.length === 0) {
       // 没有All-In，所有下注都进主底池
-      state.pot = sidePots.reduce((sum, pot) => sum + pot.amount, 0) + mainPotAmount + state.accumulatedPot;
+      state.pot = sidePots.reduce((sum, pot) => sum + pot.amount, 0) + mainPotAmount;
       state.sidePots = [];
     } else {
       // 有All-In玩家，需要分离主底池和边池
@@ -275,11 +303,11 @@ function calculateSidePots(state: GameState): void {
         }
       }
 
-      state.pot = newMainPot + state.accumulatedPot;
+      state.pot = newMainPot;
       state.sidePots = newSidePots;
     }
   } else {
-    state.pot = mainPotAmount + state.accumulatedPot;
+    state.pot = mainPotAmount;
     state.sidePots = [];
   }
 }
@@ -441,6 +469,8 @@ function resetBets(state: GameState): void {
   // 将当前阶段底池累积到跨阶段字段，防止 calculateSidePots 重新计算时丢失
   const sidePotTotal = state.sidePots.reduce((sum, sp) => sum + sp.amount, 0);
   state.accumulatedPot += state.pot + sidePotTotal;
+  state.pot = 0;
+  state.sidePots = [];
 
   for (const player of state.players) {
     player.currentBet = 0;
