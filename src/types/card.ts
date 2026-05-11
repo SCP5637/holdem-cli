@@ -92,3 +92,14 @@ export const GOLD_COLOR = '\x1b[33m';
  * 红色字体颜色代码（用于警告/过渡提示）
  */
 export const RED_COLOR = '\x1b[31m';
+
+/**
+ * 万能牌常量 — 天选之子插件使用
+ * suit='wild', rank='*' 表示可当作任意卡牌
+ */
+export const WILDCARD_CARD: Card = { suit: 'wild' as Suit, rank: '*' as Rank };
+
+/** 判断是否为万能牌 */
+export function isWildcard(card: Card): boolean {
+  return (card.suit as string) === 'wild' && (card.rank as string) === '*';
+}

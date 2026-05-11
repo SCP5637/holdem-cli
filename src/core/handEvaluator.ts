@@ -3,7 +3,7 @@
  * 实现标准扑克手牌排名逻辑，从7张可用卡牌（2张底牌 + 5张公共牌）中确定最佳5张手牌
  */
 
-import { Card, Rank, Suit, RANK_VALUES } from '../types/card';
+import { Card, Rank, Suit, RANK_VALUES, isWildcard } from '../types/card';
 import { HandRank, HandResult } from '../types/game';
 
 /**
@@ -14,6 +14,10 @@ import { HandRank, HandResult } from '../types/game';
 export function evaluateHand(cards: Card[]): { rank: HandRank; kickers: number[]; description: string } {
   if (cards.length < 2) {
     return { rank: HandRank.HighCard, kickers: [], description: '无效手牌' };
+  }
+
+  if (cards.some(isWildcard)) {
+    return findBestHand(cards);
   }
 
   if (cards.length < 5) {
@@ -31,18 +35,48 @@ export function evaluateHand(cards: Card[]): { rank: HandRank; kickers: number[]
  * @returns 找到的最佳手牌
  */
 function findBestHand(cards: Card[]): { rank: HandRank; kickers: number[]; description: string } {
-  const combinations = getCombinations(cards, 5);
+  // 有万能牌时，补全到至少5张再组合，否则 combos 为空
+  let workingCards = cards;
+  if (workingCards.some(isWildcard) && workingCards.length < 5) {
+    // 用低牌填充到5张以便 getCombinations 工作，wildcard 替换会找到最佳
+    const padding: Card[] = [];
+    for (let i = workingCards.length; i < 5; i++) {
+      padding.push({ suit: Suit.Clubs, rank: Rank.Two });
+    }
+    workingCards = [...workingCards, ...padding];
+  }
+
+  const combinations = getCombinations(workingCards, 5);
   let bestRank = HandRank.HighCard;
   let bestKickers: number[] = [];
   let bestDescription = '高牌';
 
   for (const combo of combinations) {
-    const result = evaluateFiveCardHand(combo);
-    if (result.rank > bestRank ||
-        (result.rank === bestRank && compareKickers(result.kickers, bestKickers) > 0)) {
-      bestRank = result.rank;
-      bestKickers = result.kickers;
-      bestDescription = result.description;
+    const wildIdx = combo.findIndex(isWildcard);
+    if (wildIdx >= 0) {
+      // 万能牌替换: 遍历所有可能花色+点数
+      for (const r of Object.values(Rank)) {
+        if (r === '*' as unknown as Rank) continue;
+        for (const s of Object.values(Suit)) {
+          if (s === 'wild' as unknown as Suit) continue;
+          const subbed = combo.map((c, i) => i === wildIdx ? { suit: s as Suit, rank: r as Rank } : c);
+          const result = evaluateFiveCardHand(subbed);
+          if (result.rank > bestRank ||
+              (result.rank === bestRank && compareKickers(result.kickers, bestKickers) > 0)) {
+            bestRank = result.rank;
+            bestKickers = result.kickers;
+            bestDescription = result.description;
+          }
+        }
+      }
+    } else {
+      const result = evaluateFiveCardHand(combo);
+      if (result.rank > bestRank ||
+          (result.rank === bestRank && compareKickers(result.kickers, bestKickers) > 0)) {
+        bestRank = result.rank;
+        bestKickers = result.kickers;
+        bestDescription = result.description;
+      }
     }
   }
 

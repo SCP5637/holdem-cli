@@ -11,7 +11,7 @@ import fogOfWar from './2-fogOfWar';
 import reverseFog from './3-reverseFog';
 import peopleReading, { module as _peopleReadingModule } from './4-peopleReading';
 import wanning from './5-wanning';
-import chosenOne from './6-chosenOne';
+import chosenOne, { module as _chosenOneModule } from './6-chosenOne';
 
 const allVariants: VariantDef[] = [
   arcade,

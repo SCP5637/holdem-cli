@@ -5,7 +5,7 @@
 
 import { Card, Suit, Rank } from '../../types/card';
 import { Theme, themed, chipText } from '../theme';
-import { renderCards, renderCardsSimple, renderCardsCompact } from '../cardRenderer';
+import { renderCards, renderCardsSimple, renderCardsCompact, renderCardSimple } from '../cardRenderer';
 import { padVisual, visualWidth } from '../terminal';
 import { padAnsi } from '../engine/ansi';
 import { PluginManager } from '../../plugins/manager';
@@ -170,7 +170,7 @@ function renderSlim(data: PlayerSeatData, theme: Theme, width: number): string[]
   const styled = data.isActive ? lineText : themed(lineText, theme.dim);
   lines.push(themed(BOX_V, b) + padVisual(styled, innerW) + themed(BOX_V, b));
 
-  // 简牌 / 弃牌
+  // 简牌 / 弃牌 — 逐张卡牌独立可见性控制
   const seatVis = PluginManager.hook('seatVisibility', { isHuman: data.isHuman, showAllCards: data.showAllCards, defaultShow: data.showCards });
   const effectiveShow = seatVis?.show ?? data.showCards;
 
@@ -178,11 +178,17 @@ function renderSlim(data: PlayerSeatData, theme: Theme, width: number): string[]
     const foldLabel = themed('FOLD', theme.dim);
     const leftPad = Math.floor((innerW - 4) / 2);
     lines.push(themed(BOX_V, b) + padAnsi(' '.repeat(leftPad) + foldLabel, innerW) + themed(BOX_V, b));
-  } else if (data.hand.length > 0 && effectiveShow) {
-    const simple = renderCardsSimple(data.hand.map(toCardType));
-    lines.push(themed(BOX_V, b) + padVisual(simple, innerW) + themed(BOX_V, b));
-  } else if (data.hand.length > 0 && !effectiveShow) {
-    lines.push(themed(BOX_V, b) + padVisual(themed('[?] [?]', theme.cardBack), innerW) + themed(BOX_V, b));
+  } else if (data.hand.length > 0) {
+    const cards = data.hand.map(toCardType);
+    const parts = cards.map(c => {
+      const vis = PluginManager.hook('cardVisibility', c);
+      // 显示条件: 强制可见 OR (座位可见 AND 非强制隐藏)
+      if (vis?.visible === true || (effectiveShow && vis?.visible !== false)) {
+        return renderCardSimple(c);
+      }
+      return themed('[?]', theme.cardBack);
+    });
+    lines.push(themed(BOX_V, b) + padVisual(parts.join(' '), innerW) + themed(BOX_V, b));
   }
 
   lines.push(themed('└' + BOX_H.repeat(innerW) + '┘', b));

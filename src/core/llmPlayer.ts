@@ -1,4 +1,4 @@
-import { Card, RANK_VALUES, SUIT_SYMBOLS } from '../types/card';
+import { Card, RANK_VALUES, SUIT_SYMBOLS, isWildcard } from '../types/card';
 import { GamePhase, GameState, Player, PlayerAction } from '../types/game';
 import { LLMPreset } from '../types/llm';
 import { getAvailableActions, getCurrentPlayer } from './gameState';
@@ -334,6 +334,7 @@ function normalizeAction(
 }
 
 function formatCard(card: Card): string {
+  if (isWildcard(card)) return '⭐(万能牌)';
   return `${card.rank}${SUIT_SYMBOLS[card.suit]}(${RANK_VALUES[card.rank]})`;
 }
 

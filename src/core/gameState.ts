@@ -92,6 +92,7 @@ export function createGame(config: GameConfig): GameState {
   if (config.enabledVariants && config.enabledVariants.length > 0) {
     PluginManager.init(config.enabledVariants);
     PluginManager.hook('onGameStart');
+    PluginManager.hook('onHandStart', state);
   }
 
   return state;
@@ -591,6 +592,8 @@ export function prepareNewHand(state: GameState): void {
 
   postBlinds(state);
   dealHoleCards(state);
+  // 插件钩子: 发牌后通知插件（天选之子等在此添加额外卡牌）
+  PluginManager.hook('onHandStart', state);
   setFirstToAct(state);
 }
 
