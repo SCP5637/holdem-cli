@@ -154,4 +154,6 @@ export interface GameConfig {
   aiDifficulties?: Map<number, AIDifficulty>;
   /** 每个座位的独立筹码，覆盖 startingChips */
   playerChips?: Map<number, number>;
+  /** 启用的游戏变体/特殊规则ID列表 */
+  enabledVariants?: number[];
 }

@@ -151,6 +151,7 @@ async function runLocalGame(menuUI: MenuUI): Promise<void> {
     llmAssignments,
     aiDifficulties,
     playerChips: playerChips.size > 0 ? playerChips : undefined,
+    enabledVariants: lobbyConfig.enabledVariants && lobbyConfig.enabledVariants.length > 0 ? lobbyConfig.enabledVariants : undefined,
   };
 
   logger.info('GAME', '游戏配置', config);
@@ -262,6 +263,7 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
 
   // TUI大厅等待玩家
   const seatChips = new Map<number, number>();
+  let lobbySmallBlind = hostConfig.smallBlind;
   const getLobbySeats = (): HostLobbySeat[] => hostConfig.seats.map(s => ({
     index: s.index,
     type: s.type === SeatType.Host ? '主机' :
@@ -272,23 +274,25 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
     chips: seatChips.get(s.index) ?? hostConfig.startingChips,
   }));
 
-  const gameReady = await tuiHostLobby(
+  const lobbyResult = await tuiHostLobby(
     getLobbySeats,
     async (seatIndex, newName) => {
       const seat = hostConfig.seats[seatIndex];
       if (seat) seat.name = newName;
       return true;
     },
-    async () => {
-      // 刷新 — seats 实时更新无需操作
-    },
+    async () => {},
     async (seatIndex, newChips) => {
       seatChips.set(seatIndex, newChips);
       return true;
-    }
+    },
+    async (sb) => {
+      lobbySmallBlind = sb;
+    },
+    hostConfig.smallBlind,
   );
 
-  if (!gameReady) {
+  if (!lobbyResult.start) {
     return;
   }
 
@@ -307,12 +311,13 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
   const config: GameConfig = {
     numPlayers: hostConfig.numPlayers,
     startingChips: hostConfig.startingChips,
-    smallBlind: hostConfig.smallBlind,
-    bigBlind: hostConfig.bigBlind,
+    smallBlind: lobbySmallBlind,
+    bigBlind: lobbySmallBlind * 2,
     humanPlayerIndex: hostConfig.hostSeatIndex,
     llmAssignments,
     aiDifficulties,
     playerChips: seatChips.size > 0 ? seatChips : undefined,
+    enabledVariants: lobbyResult.enabledVariants.length > 0 ? lobbyResult.enabledVariants : undefined,
   };
 
   const llmPresets = await loadLLMPresets();
@@ -522,8 +527,8 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
     });
   });
 
-  // 客户端大厅 — 等待游戏开始（支持 Esc 退出）
-  const gameReady = await tuiClientWaitForGame(() => currentGameState !== null);
+  // 客户端大厅 — 等待游戏开始（显示房间信息，支持 Esc 退出）
+  const gameReady = await tuiClientWaitForGame(() => currentGameState !== null, seats);
 
   if (!gameReady) {
     // 用户主动退出

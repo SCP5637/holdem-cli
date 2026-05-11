@@ -15,8 +15,11 @@ import {
   renderTextBox, renderNumberInput, renderYesNo,
   renderInfoBox, renderDescribedList, renderQuickActions
 } from './menu/components';
-import { getTerminalSize } from './terminal';
+import { getTerminalSize, visualWidth, stripAnsi } from './terminal';
 import { KeyEvent } from './engine/input';
+import { themed } from './theme';
+import { centerAnsi } from './engine/ansi';
+import { getAllVariants, resolveConflicts } from '../plugins';
 
 /** 从右往左找第一位非零数的量级，用于智能步进 */
 function getSmartStep(val: number): number {
@@ -1228,6 +1231,169 @@ async function rlMultilineInput(): Promise<string> {
   return lines.join('\n');
 }
 
+// ============ 变体/特殊设置 ============
+
+const BOX_H = '─';
+const BOX_V = '│';
+const BOX_TL = '┌';
+const BOX_TR = '┐';
+const BOX_BL = '└';
+const BOX_BR = '┘';
+
+/** 转义常量 */
+const R = '\x1b[0m';
+const DIM = '\x1b[38;5;8m';
+const HL = '\x1b[32;1m';
+const SUC = '\x1b[32m';
+const WARN = '\x1b[33m';
+
+/**
+ * 特殊设置页面 — 变体开关列表
+ * ↑↓导航 ← →切换Y/N Enter保存 Esc返回
+ */
+async function tuiSpecialSettings(enabled: Set<number>): Promise<Set<number>> {
+  const ctx = getMenuContext()!;
+  const { screen, input, theme } = ctx;
+  const variants = getAllVariants();
+  let selected = 0;
+  let enabledSet = new Set(enabled);
+  let flashMsg = '';
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const setFlash = (msg: string) => {
+    flashMsg = msg;
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { flashMsg = ''; render(); }, 2000);
+    render();
+  };
+
+  const render = () => {
+    const size = getTerminalSize();
+    const boxW = Math.min(size.width - 4, 62);
+    const inner = boxW - 2;
+    const b = theme.border;
+    const lines: string[] = [];
+
+    // Header
+    lines.push(...renderTitle('特殊设置', theme, size.width));
+
+    // 剩余行数 = height - 已用行 - 描述框(8) - 状态栏(1) - 2空白
+    const used = lines.length;
+    const maxVisible = Math.max(2, size.height - used - 11);
+    const maxScroll = Math.max(0, variants.length - maxVisible);
+    const scrollOff = Math.max(0, Math.min(selected - Math.floor(maxVisible / 2), maxScroll));
+    const visible = variants.slice(scrollOff, scrollOff + maxVisible);
+    const innerContent = inner - 2; // 左右各1空格
+
+    // 变体列表框
+    lines.push(centerAnsi(themed(BOX_TL + BOX_H.repeat(inner) + BOX_TR, b), size.width));
+    for (let i = 0; i < visible.length; i++) {
+      const v = visible[i];
+      const idx = scrollOff + i;
+      const isSel = idx === selected;
+      const isEn = enabledSet.has(v.id);
+
+      const cursor = isSel ? themed('▶', HL) : ' ';
+      const idTxt = `#${v.id}.`;
+      const nameTxt = v.name;
+      const devTxt = v.isDev ? ' [开发中]' : '';
+
+      // Y/N
+      const yTxt = isEn ? themed('Y', SUC) : themed('Y', DIM);
+      const nTxt = !isEn ? themed('N', WARN) : themed('N', DIM);
+      const ynTxt = `[${yTxt}] [${nTxt}]`;
+
+      const leftStr = isSel
+        ? ` ${themed('▶', HL)}${themed(idTxt + nameTxt, HL)}${themed(devTxt, DIM)}`
+        : `  ${idTxt}${themed(nameTxt, theme.text)}${themed(devTxt, DIM)}`;
+      const leftW = visualWidth(stripAnsi(leftStr));
+      const ynW = visualWidth(stripAnsi(`[${isEn ? 'Y' : ' '}] [${!isEn ? 'N' : ' '}]`));
+      const pad = Math.max(0, innerContent - leftW - ynW);
+      const filled = leftStr + ' '.repeat(pad) + ynTxt;
+      const padded = ' ' + filled + ' '.repeat(Math.max(0, innerContent - visualWidth(stripAnsi(filled))));
+      lines.push(centerAnsi(BOX_V + padded + ' ' + BOX_V, size.width));
+    }
+
+    // 滚动指示器 + 底部边框
+    if (variants.length > maxVisible) {
+      const up = scrollOff > 0 ? '↑' : ' ';
+      const dn = scrollOff + maxVisible < variants.length ? '↓' : ' ';
+      const dir = ` ${up} ${dn} 还有 ${variants.length} 项 `;
+      const dirPad = innerContent - visualWidth(dir);
+      const dirLine = ' '.repeat(Math.floor(dirPad / 2)) + dir;
+      lines.push(centerAnsi(BOX_V + ' ' + themed(dirLine, DIM) + ' '.repeat(Math.max(0, innerContent - visualWidth(dirLine))) + ' ' + BOX_V, size.width));
+    }
+
+    lines.push(centerAnsi(themed(BOX_BL + BOX_H.repeat(inner) + BOX_BR, b), size.width));
+    lines.push('');
+
+    // 描述面板
+    const cur = variants[selected];
+    if (cur) {
+      const info: string[] = [];
+      info.push(themed(cur.description, theme.text));
+      if (cur.tags.includes('#*')) {
+        info.push(themed('⚠ 与所有其他变体不兼容', WARN));
+      } else if (cur.tags.length > 0) {
+        const cnames = cur.tags.map(t => {
+          const id = parseInt(t.substring(1), 10);
+          const f = variants.find(v => v.id === id);
+          return f ? `${t} ${f.name}` : t;
+        });
+        info.push(themed(`⚠ 不兼容: ${cnames.join(', ')}`, WARN));
+      } else {
+        const oc = variants.filter(o => o.id !== cur.id && o.tags.includes(`#${cur.id}`));
+        if (oc.length > 0) {
+          info.push(themed(`被标记不兼容: ${oc.map(v => `#${v.id} ${v.name}`).join(', ')}`, DIM));
+        } else {
+          info.push(themed('兼容: 无冲突', DIM));
+        }
+      }
+      lines.push(...renderInfoBox(cur.name, info, theme, size.width));
+    }
+    lines.push('');
+
+    if (flashMsg) lines.push(centerAnsi(themed(flashMsg, WARN), size.width));
+    lines.push(renderStatusBar('↑↓ 导航  ← → 切换  Enter 保存  Esc 返回', theme, size.width));
+
+    for (let i = 0; i < lines.length; i++) screen.setLine(i, lines[i]);
+    for (let i = lines.length; i < size.height; i++) screen.setLine(i, '');
+    screen.render();
+  };
+
+  ctx.setRender(render);
+  render();
+
+  try {
+    await new Promise<void>((resolve) => {
+      const handler = (key: KeyEvent) => {
+        if (key.name === 'up' || key.name === 'down') {
+          selected = (selected + (key.name === 'down' ? 1 : -1) + variants.length) % variants.length;
+          render();
+        } else if (key.name === 'left' || key.name === 'right') {
+          const v = variants[selected];
+          const result = resolveConflicts(v.id, !enabledSet.has(v.id), enabledSet);
+          enabledSet = result.newEnabled;
+          if (result.autoDisabled.length > 0) {
+            const names = result.autoDisabled.map(id => variants.find(x => x.id === id)?.name || `#${id}`).join(', ');
+            setFlash(`已自动关闭不兼容: ${names}`);
+          } else { render(); }
+        } else if (key.name === 'return' || key.name === 'enter') {
+          input.removeCallback(handler);
+          resolve();
+        } else if (key.name === 'escape') {
+          input.removeCallback(handler);
+          resolve();
+        }
+      };
+      input.onKey(handler);
+    });
+  } finally {
+    ctx.setRender(null);
+  }
+  return enabledSet;
+}
+
 // ============ TUI 主机大厅 ============
 
 export interface HostLobbySeat {
@@ -1238,15 +1404,21 @@ export interface HostLobbySeat {
   chips: number;
 }
 
+export interface LobbyResult {
+  start: boolean;
+  enabledVariants: number[];
+}
+
 export async function tuiHostLobby(
   getSeats: () => HostLobbySeat[],
   onRename: (seatIndex: number, newName: string) => Promise<boolean>,
   onRefresh: () => Promise<void>,
   onChipsChange?: (seatIndex: number, newChips: number) => Promise<boolean>,
-): Promise<boolean> {
+  onBlindChange?: (smallBlind: number) => Promise<void>,
+  defaultSmallBlind: number = 10,
+): Promise<LobbyResult> {
   const ctx = getMenuContext();
   if (!ctx) {
-    // Fallback: simple console loop
     return rlHostLobby(getSeats(), onRename, onChipsChange);
   }
 
@@ -1265,7 +1437,12 @@ export async function tuiHostLobby(
     lines.push(...renderTitle('等待玩家连接', theme, size.width));
     lines.push(...renderInfoBox('当前座位状态', seatLines, theme, size.width));
     lines.push('');
-    lines.push(renderStatusBar('座位号:改名称/筹码  9.刷新  0.开始(需确认两次)  Esc退出', theme, size.width));
+    const statusBarParts = ['座位号:改名称/筹码  9.盲注  0.开始'];
+    if (enabledVariants.size > 0) {
+      statusBarParts.push(themed(` 特殊设置已开启`, theme.warning));
+    }
+    statusBarParts.push(' Esc退出');
+    lines.push(renderStatusBar(statusBarParts.join(''), theme, size.width));
 
     for (let i = 0; i < lines.length; i++) {
       screen.setLine(i, lines[i]);
@@ -1287,7 +1464,8 @@ export async function tuiHostLobby(
     render();
   }, 1000);
 
-  let result = false;
+  let result: LobbyResult = { start: false, enabledVariants: [] };
+  let enabledVariants = new Set<number>();
   try {
     while (true) {
       const evt = await input.waitForSelection(9);
@@ -1317,14 +1495,21 @@ export async function tuiHostLobby(
             render();
           }
         } else if (num === 9) {
-          await onRefresh();
+          if (onBlindChange) {
+            const sb = await tuiNumberInput('小盲注金额', 1, 10000, defaultSmallBlind);
+            if (sb !== null) await onBlindChange(sb);
+          }
           render();
         } else if (num === 0) {
-          const confirmed = await tuiYesNo('确认开始游戏? (不可修改座位配置!)', false);
-          if (confirmed) {
+          const wantSpec = await tuiYesNo('是否开启特殊设置?', false);
+          if (wantSpec) {
+            enabledVariants = await tuiSpecialSettings(enabledVariants);
+          }
+          const confirmStart = await tuiYesNo('确认开始游戏? (不可修改座位配置!)', false);
+          if (confirmStart) {
             const doubleConfirm = await tuiYesNo('再次确认开始游戏?', false);
             if (doubleConfirm) {
-              result = true;
+              result = { start: true, enabledVariants: [...enabledVariants] };
               break;
             }
           }
@@ -1345,7 +1530,8 @@ async function rlHostLobby(
   seats: HostLobbySeat[],
   onRename: (seatIndex: number, newName: string) => Promise<boolean>,
   onChipsChange?: (seatIndex: number, newChips: number) => Promise<boolean>,
-): Promise<boolean> {
+): Promise<LobbyResult> {
+  let enabledVariants = new Set<number>();
   while (true) {
     console.log('\n  当前座位状态:');
     for (const seat of seats) {
@@ -1382,10 +1568,35 @@ async function rlHostLobby(
     } else if (choice === 9) {
       console.log('  刷新中...');
     } else if (choice === 0) {
+      console.log('\n  是否开启特殊设置?');
+      const wantSpec = await rlYesNo('开启特殊设置? (y/N): ', false);
+      if (wantSpec) {
+        // readline fallback: show variant list simply
+        const variants = getAllVariants();
+        console.log('\n  可用特殊设置:');
+        for (const v of variants) {
+          const status = enabledVariants.has(v.id) ? 'Y' : 'N';
+          const dev = v.isDev ? ' [开发中]' : '';
+          console.log(`    #${v.id}. ${v.name} [${status}]${dev} — ${v.description}`);
+        }
+        while (true) {
+          const toggleId = await rlNumberInput('输入变体编号切换开关 (输入-1结束): ', -1, variants.length - 1);
+          if (toggleId === -1) break;
+          const v = variants.find(x => x.id === toggleId);
+          if (!v) continue;
+          const result = resolveConflicts(v.id, !enabledVariants.has(v.id), enabledVariants);
+          enabledVariants = result.newEnabled;
+          if (result.autoDisabled.length > 0) {
+            const names = result.autoDisabled.map(id => variants.find(x => x.id === id)?.name || `#${id}`).join(', ');
+            console.log(`  自动关闭不兼容: ${names}`);
+          }
+          console.log(`  当前: ${[...enabledVariants].map(id => variants.find(v => v.id === id)?.name).join(', ') || '无'}`);
+        }
+      }
       console.log('\n  警告: 游戏开始后不能再修改座位配置！');
       const confirm = await rlNumberInput('再次输入 0 确认开始游戏，或其他数字取消: ', 0, 9);
       if (confirm === 0) {
-        return true;
+        return { start: true, enabledVariants: [...enabledVariants] };
       }
       console.log('  取消开始游戏，继续等待...');
     }
@@ -1399,6 +1610,7 @@ export interface LocalLobbyConfig {
   startingChips: number;
   smallBlind: number;
   bigBlind: number;
+  enabledVariants?: number[];
 }
 
 export async function tuiLocalLobby(config: LocalLobbyConfig): Promise<LocalLobbyConfig | null> {
@@ -1408,6 +1620,7 @@ export async function tuiLocalLobby(config: LocalLobbyConfig): Promise<LocalLobb
   const { screen, input, theme } = ctx;
 
   let seats = config.seats.map(s => ({ ...s }));
+  let enabledVariants = new Set(config.enabledVariants || []);
 
   const render = () => {
     const size = getTerminalSize();
@@ -1422,7 +1635,7 @@ export async function tuiLocalLobby(config: LocalLobbyConfig): Promise<LocalLobb
     lines.push(...renderInfoBox('座位列表', seatLines, theme, size.width));
     lines.push(...renderInfoBox('盲注', info, theme, size.width));
     lines.push('');
-    lines.push(renderStatusBar('座位号:改名称/筹码  0.开始游戏  Esc返回', theme, size.width));
+    lines.push(renderStatusBar('座位号:改名称/筹码  9.盲注  0.开始游戏  Esc返回', theme, size.width));
 
     for (let i = 0; i < lines.length; i++) {
       screen.setLine(i, lines[i]);
@@ -1438,7 +1651,7 @@ export async function tuiLocalLobby(config: LocalLobbyConfig): Promise<LocalLobb
 
   try {
     while (true) {
-      const evt = await input.waitForSelection(seats.length);
+      const evt = await input.waitForSelection(Math.max(seats.length, 9));
       if (evt.type === 'number') {
         const num = evt.value;
         if (num >= 1 && num <= seats.length) {
@@ -1452,10 +1665,18 @@ export async function tuiLocalLobby(config: LocalLobbyConfig): Promise<LocalLobb
             if (newChips !== null) seat.chips = newChips;
           }
           render();
+        } else if (num === 9) {
+          const sb = await tuiNumberInput('小盲注金额', 1, 10000, config.smallBlind);
+          if (sb !== null) { config.smallBlind = sb; config.bigBlind = sb * 2; }
+          render();
         } else if (num === 0) {
+          const wantSpec = await tuiYesNo('是否开启特殊设置?', false);
+          if (wantSpec) {
+            enabledVariants = await tuiSpecialSettings(enabledVariants);
+          }
           const confirmed = await tuiYesNo('确认开始游戏?', false);
           if (confirmed) {
-            return { ...config, seats };
+            return { ...config, seats, enabledVariants: [...enabledVariants] };
           }
           render();
         }
@@ -1487,12 +1708,15 @@ export async function tuiClientSeatSelect(options: string[]): Promise<number | n
 /**
  * 客户端等待游戏开始界面
  * @param checkGameStarted 回调，返回true表示游戏已开始
+ * @param seats 房间座位信息（可选）
  * @returns true=游戏已开始, false=用户主动退出
  */
-export async function tuiClientWaitForGame(checkGameStarted: () => boolean): Promise<boolean> {
+export async function tuiClientWaitForGame(
+  checkGameStarted: () => boolean,
+  seats?: { seatIndex: number; playerName: string; type: string; isOccupied: boolean }[],
+): Promise<boolean> {
   const ctx = getMenuContext();
   if (!ctx) {
-    // Fallback: console 模式
     console.log('\n  已加入房间，等待主机开始游戏... (Ctrl+C 退出)');
     let attempts = 0;
     while (!checkGameStarted() && attempts < 600) {
@@ -1502,6 +1726,8 @@ export async function tuiClientWaitForGame(checkGameStarted: () => boolean): Pro
     return checkGameStarted();
   }
 
+  let prevSeatsJson = '';
+
   const { screen, input, theme } = ctx;
 
   const render = () => {
@@ -1509,6 +1735,14 @@ export async function tuiClientWaitForGame(checkGameStarted: () => boolean): Pro
     const lines: string[] = [];
     lines.push('');
     lines.push(...renderTitle('已加入房间', theme, size.width));
+    if (seats) {
+      const seatLines = seats.map(s => {
+        const status = s.isOccupied ? '已占用' : '空闲';
+        const st = s.type === 'host' ? '主机' : s.type === 'ai' ? 'AI' : s.type === 'llm' ? 'LLM' : '预留';
+        return `  ${s.seatIndex + 1}号位 [${st}] ${s.playerName} (${status})`;
+      });
+      lines.push(...renderInfoBox('房间座位', seatLines, theme, size.width));
+    }
     lines.push('');
     lines.push(...renderInfoBox('状态', [
       '等待主机开始游戏...',
