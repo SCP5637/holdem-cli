@@ -8,6 +8,7 @@ import { Theme, themed, chipText } from '../theme';
 import { renderCards, renderCardsSimple, renderCardsCompact } from '../cardRenderer';
 import { padVisual, visualWidth } from '../terminal';
 import { padAnsi } from '../engine/ansi';
+import { PluginManager } from '../../plugins/manager';
 
 export interface PlayerSeatData {
   name: string;
@@ -86,12 +87,16 @@ function renderFull(data: PlayerSeatData, theme: Theme, width: number): string[]
       lines.push(themed(BOX_V, b) + padAnsi(j === 2 ? foldLine : '', innerW) + themed(BOX_V, b));
     }
   } else if (data.hand.length > 0 && !data.showCards) {
-    // 对手牌背：用5行隐藏卡牌匹配人类玩家牌面高度
-    const backColor = data.isAllIn ? theme.dim : theme.cardBack;
     const cards = data.hand.map(toCardType);
-    const hiddenRender = renderCards(cards, [0, 1]);
-    for (const line of hiddenRender.split('\n')) {
-      lines.push(themed(BOX_V, b) + padVisual(themed(line, backColor), innerW) + themed(BOX_V, b));
+    const hiddenIndices: number[] = [];
+    for (let i = 0; i < cards.length; i++) {
+      if (!PluginManager.hook('cardVisibility', cards[i])?.visible) {
+        hiddenIndices.push(i);
+      }
+    }
+    const cardRender = renderCards(cards, hiddenIndices);
+    for (const line of cardRender.split('\n')) {
+      lines.push(themed(BOX_V, b) + padVisual(line, innerW) + themed(BOX_V, b));
     }
   }
 
@@ -134,10 +139,17 @@ function renderCompact(data: PlayerSeatData, theme: Theme, width: number): strin
     lines.push(themed(BOX_V, b) + padAnsi(foldLine, innerW) + themed(BOX_V, b));
     lines.push(themed(BOX_V, b) + padAnsi('', innerW) + themed(BOX_V, b));
   } else if (data.hand.length > 0 && !data.showCards) {
-    const backColor = data.isAllIn ? theme.dim : theme.cardBack;
-    lines.push(themed(BOX_V, b) + padVisual(themed('┌───┐ ┌───┐', backColor), innerW) + themed(BOX_V, b));
-    lines.push(themed(BOX_V, b) + padVisual(themed('│ ? │ │ ? │', backColor), innerW) + themed(BOX_V, b));
-    lines.push(themed(BOX_V, b) + padVisual(themed('└───┘ └───┘', backColor), innerW) + themed(BOX_V, b));
+    const cards = data.hand.map(toCardType);
+    const hiddenIndices: number[] = [];
+    for (let i = 0; i < cards.length; i++) {
+      if (!PluginManager.hook('cardVisibility', cards[i])?.visible) {
+        hiddenIndices.push(i);
+      }
+    }
+    const cardRender = renderCardsCompact(cards, hiddenIndices);
+    for (const line of cardRender.split('\n')) {
+      lines.push(themed(BOX_V, b) + padVisual(line, innerW) + themed(BOX_V, b));
+    }
   }
 
   lines.push(themed('└' + BOX_H.repeat(innerW) + '┘', b));

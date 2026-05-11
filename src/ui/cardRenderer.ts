@@ -28,13 +28,15 @@ export function renderCard(card: Card, hidden: boolean = false): string[] {
   const hookR = PluginManager.hook('renderCard', { card, hidden, mode: 'full' });
   if (hookR) return hookR as string[];
 
+  const HIDE = '\x1b[34m';
+  const RST = RESET_COLOR;
   if (hidden) {
     return [
-      '┌─────┐',
-      '│░░░░░│',
-      '│░░░░░│',
-      '│░░░░░│',
-      '└─────┘'
+      `${HIDE}┌─────┐${RST}`,
+      `${HIDE}│░░░░░│${RST}`,
+      `${HIDE}│░░░░░│${RST}`,
+      `${HIDE}│░░░░░│${RST}`,
+      `${HIDE}└─────┘${RST}`
     ];
   }
 
@@ -112,11 +114,13 @@ export function renderCardCompact(card: Card, hidden: boolean = false): string[]
   const hookR = PluginManager.hook('renderCard', { card, hidden, mode: 'compact' });
   if (hookR) return hookR as string[];
 
+  const HIDE = '\x1b[34m';
+  const RST = RESET_COLOR;
   if (hidden) {
     return [
-      '┌───┐',
-      '│ ? │',
-      '└───┘'
+      `${HIDE}┌───┐${RST}`,
+      `${HIDE}│ ? │${RST}`,
+      `${HIDE}└───┘${RST}`
     ];
   }
 

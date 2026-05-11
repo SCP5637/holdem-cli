@@ -16,6 +16,13 @@ const variant: VariantDef = {
 export const module: PluginModule = {
   variant,
   handlers: {
+    /** 玻璃卡强制可见（透明属性） */
+    cardVisibility(card: Card): { visible: boolean } | null {
+      if (isGlass(card)) return { visible: true };
+      return null;
+    },
+
+
     /** 卡牌渲染：玻璃卡用玻璃样式，无视hidden（透明可见） */
     renderCard(ctx: { card: Card; hidden: boolean; mode: string }): string[] | string | null {
       if (!isGlass(ctx.card)) return null; // 非玻璃卡，走默认渲染
