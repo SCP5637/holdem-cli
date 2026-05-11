@@ -9,9 +9,11 @@ let instance: PluginManager | null = null;
 
 export class PluginManager {
   private modules: PluginModule[];
+  readonly enabledIds: number[];
 
   constructor(enabledIds: number[]) {
     this.modules = [];
+    this.enabledIds = enabledIds;
     for (const id of enabledIds) {
       const mod = LOOKUP.get(id);
       if (mod) this.modules.push(mod);
@@ -32,6 +34,21 @@ export class PluginManager {
     return null;
   }
 
+  /**
+   * 遍历所有已启用插件，收集所有handler返回值（非null/undefined）
+   * 用于getLLMContext等需聚合所有插件输岀的场景
+   */
+  hookAll(name: string, ...args: any[]): any[] {
+    const results: any[] = [];
+    for (const mod of this.modules) {
+      const fn = mod.handlers[name];
+      if (!fn) continue;
+      const result = fn(...args);
+      if (result !== null && result !== undefined) results.push(result);
+    }
+    return results;
+  }
+
   /** 初始化单例 */
   static init(enabledIds: number[]): void {
     instance = new PluginManager(enabledIds);
@@ -45,6 +62,11 @@ export class PluginManager {
   /** 静态hook快捷方法 */
   static hook(name: string, ...args: any[]): any {
     return instance?.hook(name, ...args) ?? null;
+  }
+
+  /** 静态hookAll快捷方法 */
+  static hookAll(name: string, ...args: any[]): any[] {
+    return instance?.hookAll(name, ...args) ?? [];
   }
 
   /** 销毁单例 */

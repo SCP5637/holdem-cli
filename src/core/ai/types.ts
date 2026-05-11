@@ -26,6 +26,8 @@ export interface AIDecisionContext {
   monteCarlo: MonteCarloEngine;
   opponentModel: OpponentModel;
   drawDetector: DrawDetector;
+  /** 当前启用的插件/变体ID列表，AI策略可按需读取以调整行为 */
+  enabledVariants: number[];
 }
 
 /**

@@ -9,6 +9,7 @@ import { createMonteCarloEngine } from './monteCarlo';
 import { createOpponentModel } from './opponentModel';
 import { detectDraws } from './drawDetector';
 import { getAvailableActions, getCurrentPlayer } from '../gameState';
+import { PluginManager } from '../../plugins/manager';
 
 // === 静态导入所有策略模块 ===
 import * as rock from './AITemplate/low/rock';
@@ -127,7 +128,8 @@ export async function getAIAction(state: GameState): Promise<{ action: PlayerAct
     availableActions,
     monteCarlo: getMonteCarloEngine(),
     opponentModel: getOpponentModel(),
-    drawDetector: { detectDraws }
+    drawDetector: { detectDraws },
+    enabledVariants: PluginManager.get()?.enabledIds ?? []
   };
 
   // 记录对手动作 (本轮下注的玩家)
@@ -171,7 +173,8 @@ export async function getFallbackAIAction(state: GameState): Promise<{ action: P
     availableActions,
     monteCarlo: getMonteCarloEngine(),
     opponentModel: getOpponentModel(),
-    drawDetector: { detectDraws }
+    drawDetector: { detectDraws },
+    enabledVariants: PluginManager.get()?.enabledIds ?? []
   };
 
   return strategy.decide(ctx);

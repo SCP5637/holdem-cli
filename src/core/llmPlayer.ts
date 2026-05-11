@@ -3,6 +3,7 @@ import { GamePhase, GameState, Player, PlayerAction } from '../types/game';
 import { LLMPreset } from '../types/llm';
 import { getAvailableActions, getCurrentPlayer } from './gameState';
 import { getOpponentModelInstance, getFallbackAIAction } from './ai/index';
+import { PluginManager } from '../plugins/manager';
 import { logger } from './logger';
 
 type LLMActionResponse = {
@@ -252,6 +253,9 @@ function createDecisionContext(state: GameState, player: Player, availableAction
       };
     });
 
+  // 收集插件提供的额外上下文
+  const variantEffects = PluginManager.hookAll('getLLMContext', { state, playerId: player.id });
+
   return {
     handNumber: state.handNumber,
     phase: getPhaseName(state.currentPhase),
@@ -287,7 +291,8 @@ function createDecisionContext(state: GameState, player: Player, availableAction
       isDealer: item.id === state.dealerIndex,
       isSelf: item.id === player.id
     })),
-    opponentStats
+    opponentStats,
+    variantEffects: variantEffects.length > 0 ? variantEffects : undefined
   };
 }
 
