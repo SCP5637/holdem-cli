@@ -9,7 +9,7 @@ import arcade from './0-arcade';
 import glassCards, { module as _glassCardsModule } from './1-glassCards';
 import fogOfWar from './2-fogOfWar';
 import reverseFog from './3-reverseFog';
-import peopleReading from './4-peopleReading';
+import peopleReading, { module as _peopleReadingModule } from './4-peopleReading';
 import wanning from './5-wanning';
 import chosenOne from './6-chosenOne';
 

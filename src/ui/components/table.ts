@@ -113,6 +113,7 @@ function buildPlayerSeatData(vm: TableViewModel): PlayerSeatData[] {
     isRemote: p.isRemote || false,
     isYou: p.isYou || false,
     showCards: p.showCards || false,
+    showAllCards: p.showAllCards || false,
   }));
 }
 

@@ -25,6 +25,7 @@ export interface PlayerSeatData {
   isRemote?: boolean;
   isYou?: boolean;
   showCards: boolean;
+  showAllCards: boolean;
   isDisconnected?: boolean;
 }
 
@@ -73,24 +74,24 @@ function renderFull(data: PlayerSeatData, theme: Theme, width: number): string[]
   lines.push(themed(BOX_V, b) + padVisual(infoLine, innerW) + themed(BOX_V, b));
 
   // 第3-7行: 手牌 / 牌背 / 弃牌(保持5行高度)
-  if (data.hand.length > 0 && data.showCards) {
-    const cards = data.hand.map(toCardType);
-    const cardRender = renderCards(cards);
-    for (const line of cardRender.split('\n')) {
-      lines.push(themed(BOX_V, b) + padVisual(line, innerW) + themed(BOX_V, b));
-    }
-  } else if (!data.isActive) {
+  // seatVisibility hook: 识人术等插件可反转座位牌面可见性
+  const seatVis = PluginManager.hook('seatVisibility', { isHuman: data.isHuman, showAllCards: data.showAllCards, defaultShow: data.showCards });
+  const effectiveShow = seatVis?.show ?? data.showCards;
+
+  if (data.hand.length > 0 && !data.isActive) {
     const foldLabel = themed('FOLD', theme.dim);
     const leftPad = Math.floor((innerW - 4) / 2);
     const foldLine = ' '.repeat(leftPad) + foldLabel;
     for (let j = 0; j < 5; j++) {
       lines.push(themed(BOX_V, b) + padAnsi(j === 2 ? foldLine : '', innerW) + themed(BOX_V, b));
     }
-  } else if (data.hand.length > 0 && !data.showCards) {
+  } else if (data.hand.length > 0) {
     const cards = data.hand.map(toCardType);
     const hiddenIndices: number[] = [];
     for (let i = 0; i < cards.length; i++) {
-      if (!PluginManager.hook('cardVisibility', cards[i])?.visible) {
+      const vis = PluginManager.hook('cardVisibility', cards[i]);
+      // hide if: force-hidden by hook OR (not force-visible AND seat not showing)
+      if (vis?.visible === false || (!effectiveShow && vis?.visible !== true)) {
         hiddenIndices.push(i);
       }
     }
@@ -125,24 +126,22 @@ function renderCompact(data: PlayerSeatData, theme: Theme, width: number): strin
   lines.push(themed(BOX_V, b) + padVisual(chipsStr + betStr, innerW) + themed(BOX_V, b));
 
   // 3行紧凑牌 / 弃牌(保持3行高度)
-  if (data.hand.length > 0 && data.showCards) {
-    const cards = data.hand.map(toCardType);
-    const cardRender = renderCardsCompact(cards);
-    for (const line of cardRender.split('\n')) {
-      lines.push(themed(BOX_V, b) + padVisual(line, innerW) + themed(BOX_V, b));
-    }
-  } else if (!data.isActive) {
+  const seatVis = PluginManager.hook('seatVisibility', { isHuman: data.isHuman, showAllCards: data.showAllCards, defaultShow: data.showCards });
+  const effectiveShow = seatVis?.show ?? data.showCards;
+
+  if (data.hand.length > 0 && !data.isActive) {
     const foldLabel = themed('FOLD', theme.dim);
     const leftPad = Math.floor((innerW - 4) / 2);
     const foldLine = ' '.repeat(leftPad) + foldLabel;
     lines.push(themed(BOX_V, b) + padAnsi('', innerW) + themed(BOX_V, b));
     lines.push(themed(BOX_V, b) + padAnsi(foldLine, innerW) + themed(BOX_V, b));
     lines.push(themed(BOX_V, b) + padAnsi('', innerW) + themed(BOX_V, b));
-  } else if (data.hand.length > 0 && !data.showCards) {
+  } else if (data.hand.length > 0) {
     const cards = data.hand.map(toCardType);
     const hiddenIndices: number[] = [];
     for (let i = 0; i < cards.length; i++) {
-      if (!PluginManager.hook('cardVisibility', cards[i])?.visible) {
+      const vis = PluginManager.hook('cardVisibility', cards[i]);
+      if (vis?.visible === false || (!effectiveShow && vis?.visible !== true)) {
         hiddenIndices.push(i);
       }
     }
@@ -172,14 +171,17 @@ function renderSlim(data: PlayerSeatData, theme: Theme, width: number): string[]
   lines.push(themed(BOX_V, b) + padVisual(styled, innerW) + themed(BOX_V, b));
 
   // 简牌 / 弃牌
+  const seatVis = PluginManager.hook('seatVisibility', { isHuman: data.isHuman, showAllCards: data.showAllCards, defaultShow: data.showCards });
+  const effectiveShow = seatVis?.show ?? data.showCards;
+
   if (!data.isActive) {
     const foldLabel = themed('FOLD', theme.dim);
     const leftPad = Math.floor((innerW - 4) / 2);
     lines.push(themed(BOX_V, b) + padAnsi(' '.repeat(leftPad) + foldLabel, innerW) + themed(BOX_V, b));
-  } else if (data.hand.length > 0 && data.showCards) {
+  } else if (data.hand.length > 0 && effectiveShow) {
     const simple = renderCardsSimple(data.hand.map(toCardType));
     lines.push(themed(BOX_V, b) + padVisual(simple, innerW) + themed(BOX_V, b));
-  } else if (data.hand.length > 0 && !data.showCards) {
+  } else if (data.hand.length > 0 && !effectiveShow) {
     lines.push(themed(BOX_V, b) + padVisual(themed('[?] [?]', theme.cardBack), innerW) + themed(BOX_V, b));
   }
 

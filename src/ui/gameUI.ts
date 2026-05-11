@@ -648,6 +648,7 @@ export class GameUI {
         isRemote: p.isRemote || false,
         isYou: this.mySeatIdx >= 0 && p.id === this.mySeatIdx,
         showCards: showAllCards || (this.mySeatIdx >= 0 && p.id === this.mySeatIdx),
+        showAllCards,
         isDisconnected: (p as any).isDisconnected || false,
       })),
       currentPlayerIndex: (state as any).currentPlayerIndex || 0,
