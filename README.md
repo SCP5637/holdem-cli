@@ -8,6 +8,8 @@
 
 ## 快速开始
 
+如果你看不懂↓下面↓这些是什么，没关系，右边的Release，点进去，找最新的版本号，下载下面的holdem压缩包，解压即玩
+
 ```bash
 git clone https://github.com/SCP5637/holdem-cli.git && cd holdem-cli
 npm install
