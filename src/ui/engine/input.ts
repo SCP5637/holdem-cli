@@ -278,27 +278,27 @@ export class InputHandler {
 
   /** 解析原始data buffer为KeyEvent */
   private parseData(buf: Buffer): KeyEvent | null {
-    // Ctrl+C (0x03)
+    // Ctrl+C (0x03) 中断
     if (buf[0] === 0x03) {
       return { name: 'c', sequence: '\x03', ctrl: true, meta: false, shift: false };
     }
 
-    // Ctrl+V paste (0x16)
+    // Ctrl+V 粘贴 (0x16)
     if (buf[0] === 0x16) {
       return { name: 'ctrl+v', sequence: '\x16', ctrl: true, meta: false, shift: false };
     }
 
-    // Enter (0x0D)
+    // Enter 回车 (0x0D)
     if (buf[0] === 0x0d) {
       return { name: 'return', sequence: '\r', ctrl: false, meta: false, shift: false };
     }
 
-    // Escape / ANSI escape sequences
+    // Escape / ANSI 转义序列
     if (buf[0] === 0x1b) {
       if (buf.length === 1) {
         return { name: 'escape', sequence: '\x1b', ctrl: false, meta: false, shift: false };
       }
-      // Arrow keys: \x1b[A (up), \x1b[B (down), \x1b[C (right), \x1b[D (left)
+      // 方向键: \x1b[A (上), \x1b[B (下), \x1b[C (右), \x1b[D (左)
       if (buf.length === 3 && buf[1] === 0x5b) {
         switch (buf[2]) {
           case 0x41: return { name: 'up', sequence: '\x1b[A', ctrl: false, meta: false, shift: false };
@@ -310,7 +310,7 @@ export class InputHandler {
       return null;
     }
 
-    // Backspace (0x7F or 0x08)
+    // Backspace 退格 (0x7F / 0x08)
     if (buf[0] === 0x7f || buf[0] === 0x08) {
       return { name: 'backspace', sequence: buf.toString(), ctrl: false, meta: false, shift: false };
     }

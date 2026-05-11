@@ -129,8 +129,7 @@ export class GameUI {
 
   /** resize后重绘当前叠加层 — 底部面板由renderGame统一渲染 */
   private reRenderOverlay(): void {
-    // renderGame handles all overlay rendering via the bottom panel
-    // This method kept for compatibility; forceFullNext ensures clean state
+    // 重绘全部由renderGame处理，本方法保留兼容性
     this.screen.forceFullNext();
   }
 

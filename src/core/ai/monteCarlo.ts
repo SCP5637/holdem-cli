@@ -54,7 +54,7 @@ export function createMonteCarloEngine(): MonteCarloEngine {
       const remainingDeck = createDeck().filter(c => !knownKeys.has(cardKey(c)));
 
       if (board.length >= 5) {
-        // River: only need to simulate opponent hands
+        // 河牌圈：只需模拟对手手牌
         let wins = 0;
         let ties = 0;
 
@@ -82,7 +82,7 @@ export function createMonteCarloEngine(): MonteCarloEngine {
         return { win: wins / numSims, tie: ties / numSims, equity: (wins + ties / 2) / numSims };
       }
 
-      // Pre-river: deal remaining board cards + opponent hands
+      // 非河牌圈：发完剩余公共牌 + 对手手牌
       const cardsToDeal = 5 - board.length;
       let wins = 0;
       let ties = 0;

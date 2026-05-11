@@ -69,7 +69,7 @@ export function renderActionPanel(data: ActionPanelData, theme: Theme, width: nu
 
   lines.push(centerAnsi(themed('└' + '─'.repeat(boxW) + '┘', b), width));
 
-  // Pad to target height
+  // 填充到目标高度
   while (height && lines.length < height) {
     lines.push(' '.repeat(width));
   }

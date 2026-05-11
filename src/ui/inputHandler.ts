@@ -18,6 +18,15 @@ import {
 import { getTerminalSize } from './terminal';
 import { KeyEvent } from './engine/input';
 
+/** 从右往左找第一位非零数的量级，用于智能步进 */
+function getSmartStep(val: number): number {
+  if (val <= 0) return 1;
+  let divisor = 1;
+  let t = val;
+  while (t % 10 === 0) { t /= 10; divisor *= 10; }
+  return divisor;
+}
+
 // ============ TUI 核心交互 ============
 
 async function tuiSelect(title: string, options: string[], initial: number = 0): Promise<number | null> {
@@ -208,18 +217,21 @@ async function tuiNumberInput(
           cleanup();
           resolve(num);
         }
-        // Invalid: ignore, stay on current value
+        // 无效输入则忽略，保持当前值
       } else if (key.name === 'escape') {
         cleanup();
         resolve(null);
       } else if (key.name === 'up') {
         let val = parseInt(text, 10) || 0;
-        val = Math.min(max, val + 1);
+        const step = getSmartStep(val);
+        val = Math.min(max, val + step);
         text = String(val);
         render();
       } else if (key.name === 'down') {
         let val = parseInt(text, 10) || 0;
-        val = Math.max(min, val - 1);
+        let step = getSmartStep(val);
+        if (val - step <= 0) step = Math.max(1, step / 10);
+        val = Math.max(min, val - step);
         text = String(val);
         render();
       } else if (key.name === 'backspace') {
@@ -315,7 +327,7 @@ function tuiShowMessage(msg: string): void {
   const { screen, theme } = ctx;
   const size = getTerminalSize();
   const line = renderStatusBar(msg, theme, size.width);
-  // Find a free row
+  // 找空行显示消息
   screen.setLine(size.height - 1, line);
   screen.render();
 }
@@ -395,7 +407,7 @@ export async function getNumberInput(question: string, min: number, max: number,
     while (true) {
       const result = await tuiNumberInput(question, min, max, defaultValue);
       if (result !== null) return result;
-      // Esc pressed, but caller loops - just continue
+      // Esc 忽略，继续等待
     }
   }
   return rlNumberInput(question, min, max, defaultValue);
@@ -411,28 +423,32 @@ export async function getGameConfig(): Promise<{
   aiDifficulties: Map<number, AIDifficulty>;
 }> {
   if (isTUI()) {
-    const numPlayers = await tuiWizardNumber('玩家数量', 2, 8, undefined);
-    if (numPlayers === null) throw new Error('配置取消');
+    const nv = await runNumericWizard([
+      { key: 'numPlayers', prompt: '玩家数量', min: 2, max: 8 },
+      { key: 'humanPosition', prompt: ctx => `你的座位 (1-${ctx.numPlayers})`, min: 1, max: ctx => ctx.numPlayers },
+      { key: 'startingChips', prompt: '初始筹码', min: 100, max: 100000, default: 1000 },
+      { key: 'smallBlind', prompt: '小盲注金额', min: 1, max: 10000, default: 10 },
+    ]);
+    if (!nv) throw new Error('配置取消');
 
-    const humanPosition = await tuiWizardNumber(`你的座位 (1-${numPlayers})`, 1, numPlayers, undefined);
-    if (humanPosition === null) throw new Error('配置取消');
-
-    const startingChips = await tuiWizardNumber('初始筹码', 100, 100000, 1000);
-    if (startingChips === null) throw new Error('配置取消');
-
-    const smallBlind = await tuiWizardNumber('小盲注金额', 1, 10000, 10);
-    if (smallBlind === null) throw new Error('配置取消');
-
-    const bigBlind = smallBlind * 2;
+    const bigBlind = nv.smallBlind * 2;
 
     const presets = await loadLLMPresets();
-    const { llmAssignments, aiDifficulties } = await tuiConfigureOpponents(numPlayers, humanPosition - 1, presets);
+    let llmAssignments: LLMAssignment[] = [];
+    let aiDifficulties = new Map<number, AIDifficulty>();
+    while (true) {
+      const opp = await tuiConfigureOpponents(nv.numPlayers, nv.humanPosition - 1, presets);
+      if (opp) { llmAssignments = opp.llmAssignments; aiDifficulties = opp.aiDifficulties; break; }
+      // ESC → back to smallBlind, 再ESC → 彻底取消
+      const sb = await tuiWizardNumber('小盲注金额', 1, 10000, nv.smallBlind);
+      if (sb === null) throw new Error('配置取消');
+    }
 
     return {
-      numPlayers,
-      humanPosition: humanPosition - 1,
-      startingChips,
-      smallBlind,
+      numPlayers: nv.numPlayers,
+      humanPosition: nv.humanPosition - 1,
+      startingChips: nv.startingChips,
+      smallBlind: nv.smallBlind,
       bigBlind,
       llmAssignments,
       aiDifficulties
@@ -496,42 +512,46 @@ export async function selectRunMode(): Promise<RunMode | null> {
 
 export async function configureHost(): Promise<HostConfig> {
   if (isTUI()) {
-    const numPlayers = await tuiWizardNumber('玩家数量', 2, 8, undefined);
-    if (numPlayers === null) throw new Error('配置取消');
+    const nv = await runNumericWizard([
+      { key: 'numPlayers', prompt: '玩家数量', min: 2, max: 8 },
+      { key: 'hostSeatIndex', prompt: ctx => `你的座位 (1-${ctx.numPlayers})`, min: 1, max: ctx => ctx.numPlayers },
+      { key: 'port', prompt: '监听端口', min: 1024, max: 65535, default: 15637 },
+      { key: 'startingChips', prompt: '初始筹码', min: 100, max: 100000, default: 1000 },
+      { key: 'smallBlind', prompt: '小盲注金额', min: 1, max: 10000, default: 10 },
+    ]);
+    if (!nv) throw new Error('配置取消');
 
-    const hostSeatIndex = await tuiWizardNumber(`你的座位 (1-${numPlayers})`, 1, numPlayers, undefined);
-    if (hostSeatIndex === null) throw new Error('配置取消');
-
-    const port = await tuiWizardNumber('监听端口', 1024, 65535, 15637);
-    if (port === null) throw new Error('配置取消');
-
-    const startingChips = await tuiWizardNumber('初始筹码', 100, 100000, 1000);
-    if (startingChips === null) throw new Error('配置取消');
-
-    const smallBlind = await tuiWizardNumber('小盲注金额', 1, 10000, 10);
-    if (smallBlind === null) throw new Error('配置取消');
-
-    const bigBlind = smallBlind * 2;
+    const bigBlind = nv.smallBlind * 2;
 
     const presets = await loadLLMPresets();
     const seats: SeatConfig[] = [];
-    for (let i = 0; i < numPlayers; i++) {
-      if (i === hostSeatIndex - 1) {
-        seats.push({ index: i, type: SeatType.Host, name: 'Host', isOccupied: true });
-      } else {
-        const seat = await tuiConfigureSeat(i, presets);
-        if (!seat) throw new Error('配置取消');
-        seats.push(seat);
+    let seatConfigOk = false;
+    while (!seatConfigOk) {
+      seats.length = 0;
+      seatConfigOk = true;
+      for (let i = 0; i < nv.numPlayers; i++) {
+        if (i === nv.hostSeatIndex - 1) {
+          seats.push({ index: i, type: SeatType.Host, name: 'Host', isOccupied: true });
+        } else {
+          const seat = await tuiConfigureSeat(i, presets);
+          if (!seat) { seatConfigOk = false; break; }
+          seats.push(seat);
+        }
+      }
+      if (!seatConfigOk) {
+        // ESC in seat config → back to smallBlind, 再ESC → 取消
+        const sb = await tuiWizardNumber('小盲注金额', 1, 10000, nv.smallBlind);
+        if (sb === null) throw new Error('配置取消');
       }
     }
 
     return {
-      numPlayers,
-      hostSeatIndex: hostSeatIndex - 1,
-      port,
+      numPlayers: nv.numPlayers,
+      hostSeatIndex: nv.hostSeatIndex - 1,
+      port: nv.port,
       seats,
-      startingChips,
-      smallBlind,
+      startingChips: nv.startingChips,
+      smallBlind: nv.smallBlind,
       bigBlind
     };
   }
@@ -653,6 +673,39 @@ export async function waitForEnter(message: string = '按 Enter 键继续...'): 
   await rlInput(message);
 }
 
+// ============ 向导: 支持返回上一步 ============
+
+type StepCtx = Record<string, any>;
+
+interface NumericField {
+  key: string;
+  prompt: string | ((ctx: StepCtx) => string);
+  min: number | ((ctx: StepCtx) => number);
+  max: number | ((ctx: StepCtx) => number);
+  default?: number | ((ctx: StepCtx) => number);
+}
+
+/** 将一组数字输入包装成可返回上一步的向导 */
+async function runNumericWizard(fields: NumericField[]): Promise<StepCtx | null> {
+  const ctx: StepCtx = {};
+  let i = 0;
+  while (i >= 0 && i < fields.length) {
+    const f = fields[i];
+    const prompt = typeof f.prompt === 'function' ? f.prompt(ctx) : f.prompt;
+    const min = typeof f.min === 'function' ? f.min(ctx) : f.min;
+    const max = typeof f.max === 'function' ? f.max(ctx) : f.max;
+    const def = typeof f.default === 'function' ? f.default(ctx) : f.default;
+    const r = await tuiNumberInput(prompt, min, max, def);
+    if (r === null) {
+      if (i > 0) { i--; continue; }
+      return null; // full cancel
+    }
+    ctx[f.key] = r;
+    i++;
+  }
+  return ctx;
+}
+
 // ============ 内部: TUI 向导辅助 ============
 
 async function tuiWizardNumber(prompt: string, min: number, max: number, defaultValue?: number): Promise<number | null> {
@@ -678,14 +731,14 @@ async function tuiConfigureOpponents(
 
     const seatName = `座位 ${i + 1}`;
 
-    // Build options: 0=AI, 1..N=LLM presets
+    // 构建选项: 0=AI, 1..N=LLM预设
     const options: string[] = ['普通 AI (选择难度)'];
     for (const p of presets) {
       options.push(`LLM: ${p.name} (${p.model})`);
     }
 
     if (options.length === 1) {
-      // No LLM presets → just select difficulty
+      // 无LLM预设 → 直接选难度
       const diff = await tuiSelectDifficulty();
       if (diff !== null) aiDifficulties.set(i, diff);
       else aiDifficulties.set(i, AIDifficulty.Medium);
@@ -709,15 +762,15 @@ async function tuiConfigureOpponents(
 /** 逐字着色: 返回单个字符的ANSI颜色码 */
 function getCharColor(diffIdx: number, charIdx: number, frame: number): string {
   switch (diffIdx) {
-    case 0: return '\x1b[32m';  // Low — 绿色
-    case 1: return '\x1b[33m';  // Medium — 黄色
-    case 2: return '\x1b[31m';  // High — 红色
-    case 3: { // Ultra — 红色底, 亮粉逐字波浪
+    case 0: return '\x1b[32m';  // 初级 — 绿色
+    case 1: return '\x1b[33m';  // 中级 — 黄色
+    case 2: return '\x1b[31m';  // 高级 — 红色
+    case 3: { // 超级 — 红色底, 亮粉逐字波浪
       const len = 5;
       const wave = frame % len;
       return charIdx === wave ? '\x1b[38;5;201m' : '\x1b[31m';
     }
-    case 4: { // Max — 逐字彩虹流动
+    case 4: { // 极限 — 逐字彩虹流动
       const rainbow = ['\x1b[31m', '\x1b[33m', '\x1b[32m', '\x1b[36m', '\x1b[34m', '\x1b[35m'];
       return rainbow[(charIdx + frame) % rainbow.length];
     }
@@ -963,8 +1016,8 @@ async function configureLLMPresets(): Promise<LLMPreset[]> {
       if (idx === null) return presets;
 
       if (idx >= 0 && idx < options.length && presets.length > 0) {
-        // Selected a preset (info only, no action from preset selection alone)
-        // Re-select for action
+        // 选中预设仅展示信息，不做操作
+        // 等待用户选择操作
         continue;
       }
 
@@ -1182,17 +1235,19 @@ export interface HostLobbySeat {
   type: string;
   name: string;
   isOccupied: boolean;
+  chips: number;
 }
 
 export async function tuiHostLobby(
   getSeats: () => HostLobbySeat[],
   onRename: (seatIndex: number, newName: string) => Promise<boolean>,
-  onRefresh: () => Promise<void>
+  onRefresh: () => Promise<void>,
+  onChipsChange?: (seatIndex: number, newChips: number) => Promise<boolean>,
 ): Promise<boolean> {
   const ctx = getMenuContext();
   if (!ctx) {
     // Fallback: simple console loop
-    return rlHostLobby(getSeats(), onRename);
+    return rlHostLobby(getSeats(), onRename, onChipsChange);
   }
 
   const { screen, input, theme } = ctx;
@@ -1202,7 +1257,7 @@ export async function tuiHostLobby(
     const size = getTerminalSize();
     const seatLines = seats.map(s => {
       const status = s.isOccupied ? '已占用' : '空闲';
-      return `  ${s.index + 1}号位 [${s.type}] ${s.name} (${status})`;
+      return `  ${s.index + 1}号位 [${s.type}] ${s.name} 筹码:${s.chips} (${status})`;
     });
 
     const lines: string[] = [];
@@ -1210,7 +1265,7 @@ export async function tuiHostLobby(
     lines.push(...renderTitle('等待玩家连接', theme, size.width));
     lines.push(...renderInfoBox('当前座位状态', seatLines, theme, size.width));
     lines.push('');
-    lines.push(renderStatusBar('座位: 1-' + seats.length + ' 修改名称  9.刷新  0.开始(需确认两次)', theme, size.width));
+    lines.push(renderStatusBar('座位号:改名称/筹码  9.刷新  0.开始(需确认两次)  Esc退出', theme, size.width));
 
     for (let i = 0; i < lines.length; i++) {
       screen.setLine(i, lines[i]);
@@ -1241,15 +1296,23 @@ export async function tuiHostLobby(
         const seats = getSeats();
         if (num >= 1 && num <= seats.length) {
           const seat = seats[num - 1];
-          // 只禁止重命名已连接的远程玩家座位，允许重命名AI/LLM座位
+          // 只禁止修改已连接的远程玩家座位
           if (seat.type === '预留' && seat.isOccupied) {
-            tuiShowMessage('该远程座位已有玩家连接，不能修改名称');
+            tuiShowMessage('该远程座位已有玩家连接，不能修改');
             await new Promise(r => setTimeout(r, 1500));
             render();
           } else {
+            // 改名
             const newName = await tuiTextInput(`${num}号位新名称`, seat.name);
             if (newName) {
               await onRename(num - 1, newName);
+            }
+            // 改筹码
+            if (onChipsChange) {
+              const newChips = await tuiNumberInput(`${num}号位筹码`, 100, 100000, seat.chips);
+              if (newChips !== null && newChips !== seat.chips) {
+                await onChipsChange(num - 1, newChips);
+              }
             }
             render();
           }
@@ -1267,6 +1330,8 @@ export async function tuiHostLobby(
           }
           render();
         }
+      } else if (evt.type === 'escape') {
+        break;
       }
     }
   } finally {
@@ -1278,17 +1343,18 @@ export async function tuiHostLobby(
 
 async function rlHostLobby(
   seats: HostLobbySeat[],
-  onRename: (seatIndex: number, newName: string) => Promise<boolean>
+  onRename: (seatIndex: number, newName: string) => Promise<boolean>,
+  onChipsChange?: (seatIndex: number, newChips: number) => Promise<boolean>,
 ): Promise<boolean> {
   while (true) {
     console.log('\n  当前座位状态:');
     for (const seat of seats) {
       const status = seat.isOccupied ? '已占用' : '空闲';
-      console.log(`    ${seat.index + 1}号位 [${seat.type}] ${seat.name} (${status})`);
+      console.log(`    ${seat.index + 1}号位 [${seat.type}] ${seat.name} 筹码:${seat.chips} (${status})`);
     }
     console.log();
     console.log('  可用指令:');
-    console.log('    1-8. 修改对应座位名称 (仅已连接的远程玩家不可修改)');
+    console.log('    1-8. 修改对应座位(名称+筹码)');
     console.log('    9.   刷新座位状态');
     console.log('    0.   开始游戏 (需要输入两次 0 确认)');
     console.log();
@@ -1299,12 +1365,17 @@ async function rlHostLobby(
       const seat = seats[choice - 1];
       if (seat) {
         if (seat.type === '预留' && seat.isOccupied) {
-          console.log('  该远程座位已有玩家连接，不能修改名称');
+          console.log('  该远程座位已有玩家连接，不能修改');
         } else {
           const newName = await rlInput(`输入 ${choice} 号位新名称 (当前: ${seat.name}): `);
           if (newName.trim()) {
             await onRename(choice - 1, newName.trim());
             seats[choice - 1].name = newName.trim();
+          }
+          if (onChipsChange) {
+            const newChips = await rlNumberInput(`输入 ${choice} 号位筹码 (当前: ${seat.chips}): `, 100, 100000);
+            await onChipsChange(choice - 1, newChips);
+            seats[choice - 1].chips = newChips;
           }
         }
       }
@@ -1318,6 +1389,82 @@ async function rlHostLobby(
       }
       console.log('  取消开始游戏，继续等待...');
     }
+  }
+}
+
+// ============ 本地模式大厅 ============
+
+export interface LocalLobbyConfig {
+  seats: { index: number; type: string; name: string; chips: number }[];
+  startingChips: number;
+  smallBlind: number;
+  bigBlind: number;
+}
+
+export async function tuiLocalLobby(config: LocalLobbyConfig): Promise<LocalLobbyConfig | null> {
+  const ctx = getMenuContext();
+  if (!ctx) return config; // fallback: 直接返回
+
+  const { screen, input, theme } = ctx;
+
+  let seats = config.seats.map(s => ({ ...s }));
+
+  const render = () => {
+    const size = getTerminalSize();
+    const seatLines = seats.map(s => {
+      return `  ${s.index + 1}号位 [${s.type}] ${s.name}  筹码:${s.chips}`;
+    });
+    const info = [`小盲:${config.smallBlind}  大盲:${config.bigBlind}`];
+
+    const lines: string[] = [];
+    lines.push('');
+    lines.push(...renderTitle('对局设置', theme, size.width));
+    lines.push(...renderInfoBox('座位列表', seatLines, theme, size.width));
+    lines.push(...renderInfoBox('盲注', info, theme, size.width));
+    lines.push('');
+    lines.push(renderStatusBar('座位号:改名称/筹码  0.开始游戏  Esc返回', theme, size.width));
+
+    for (let i = 0; i < lines.length; i++) {
+      screen.setLine(i, lines[i]);
+    }
+    for (let i = lines.length; i < size.height; i++) {
+      screen.setLine(i, '');
+    }
+    screen.render();
+  };
+
+  ctx.setRender(render);
+  render();
+
+  try {
+    while (true) {
+      const evt = await input.waitForSelection(seats.length);
+      if (evt.type === 'number') {
+        const num = evt.value;
+        if (num >= 1 && num <= seats.length) {
+          const seat = seats[num - 1];
+          // 改名
+          const newName = await tuiTextInput(`${num}号位新名称`, seat.name);
+          if (newName) seat.name = newName;
+          // 改筹码
+          if (seat.type !== '预留') {
+            const newChips = await tuiNumberInput(`${num}号位筹码`, 100, 100000, seat.chips);
+            if (newChips !== null) seat.chips = newChips;
+          }
+          render();
+        } else if (num === 0) {
+          const confirmed = await tuiYesNo('确认开始游戏?', false);
+          if (confirmed) {
+            return { ...config, seats };
+          }
+          render();
+        }
+      } else if (evt.type === 'escape') {
+        return null;
+      }
+    }
+  } finally {
+    ctx.setRender(null);
   }
 }
 

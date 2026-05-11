@@ -32,7 +32,7 @@ export function renderActionLog(data: ActionLogData, theme: Theme, width: number
 
   if (innerW <= 0 || entryH <= 0) return [];
 
-  // Merge player actions with system messages, sorted by time (system entries already have time)
+  // 合并玩家动作与系统消息，按时间排序（系统消息已自带时间）
   const allEntries: { text: string; isSystem: boolean }[] = [];
 
   for (const e of data.systemEntries) {

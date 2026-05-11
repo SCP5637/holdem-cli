@@ -152,4 +152,6 @@ export interface GameConfig {
   humanPlayerIndex: number;
   llmAssignments?: LLMAssignment[];
   aiDifficulties?: Map<number, AIDifficulty>;
+  /** 每个座位的独立筹码，覆盖 startingChips */
+  playerChips?: Map<number, number>;
 }

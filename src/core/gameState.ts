@@ -45,10 +45,11 @@ export function createGame(config: GameConfig): GameState {
       name = `Player ${i + 1} [${diffLabel}:${aiStrategy}]`;
     }
 
+    const playerChips = config.playerChips?.get(i) ?? config.startingChips;
     players.push({
       id: i,
       name,
-      chips: config.startingChips,
+      chips: playerChips,
       hand: [],
       isActive: true,
       isHuman,

@@ -19,7 +19,8 @@ import {
   getInput,
   getNumberInput,
   tuiClientSeatSelect,
-  tuiClientWaitForGame
+  tuiClientWaitForGame,
+  tuiLocalLobby,
 } from './ui/inputHandler';
 import { GameUI } from './ui/gameUI';
 import { centerVisual } from './ui/terminal';
@@ -95,10 +96,10 @@ async function main(): Promise<void> {
     }
   } finally {
     if (!transferDone) {
-      // Config phase failed or user cancelled — menuUI still owns screen
+      // 配置阶段失败或取消 — menuUI 仍持屏幕控制权
       menuUI.destroy();
     }
-    // If transferDone, GameUI now owns screen+input and its destroy() handles cleanup
+    // transferDone后 GameUI 持有屏幕和输入控制权，destroy() 负责清理
     if (gameUI) {
       gameUI.destroy();
       gameUI = null;
@@ -119,6 +120,28 @@ async function main(): Promise<void> {
 async function runLocalGame(menuUI: MenuUI): Promise<void> {
   const { numPlayers, humanPosition, startingChips, smallBlind, bigBlind, llmAssignments, aiDifficulties } = await getGameConfig();
 
+  // 大厅: 展示/修改座位名称和筹码
+  const lobbyConfig = await tuiLocalLobby({
+    seats: Array.from({ length: numPlayers }, (_, i) => ({
+      index: i,
+      type: i === humanPosition ? '玩家' :
+            llmAssignments?.some(a => a.playerIndex === i) ? 'LLM' : 'AI',
+      name: i === humanPosition ? 'You' :
+            llmAssignments?.find(a => a.playerIndex === i)?.presetName || `Player ${i + 1}`,
+      chips: startingChips,
+    })),
+    startingChips,
+    smallBlind,
+    bigBlind,
+  });
+  if (!lobbyConfig) throw new Error('配置取消');
+
+  // 构建 per-player chips map
+  const playerChips = new Map<number, number>();
+  for (const s of lobbyConfig.seats) {
+    if (s.chips !== startingChips) playerChips.set(s.index, s.chips);
+  }
+
   const config: GameConfig = {
     numPlayers,
     startingChips,
@@ -126,7 +149,8 @@ async function runLocalGame(menuUI: MenuUI): Promise<void> {
     bigBlind,
     humanPlayerIndex: humanPosition,
     llmAssignments,
-    aiDifficulties
+    aiDifficulties,
+    playerChips: playerChips.size > 0 ? playerChips : undefined,
   };
 
   logger.info('GAME', '游戏配置', config);
@@ -137,6 +161,10 @@ async function runLocalGame(menuUI: MenuUI): Promise<void> {
   logger.info('GAME', '已加载 LLM 预设', { presets: llmPresets.map(p => p.name) });
 
   let state = createGame(config);
+  // 应用大厅设置的名称
+  for (const s of lobbyConfig.seats) {
+    if (state.players[s.index]) state.players[s.index].name = s.name;
+  }
   logger.info('GAME', '游戏创建成功', { players: state.players.map(p => ({ name: p.name, isHuman: p.isHuman, llmPreset: p.llmPresetName })) });
 
   // 移交给GameUI
@@ -180,7 +208,7 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
   // 设置事件监听
   gameServer.on('player-joined', (seatIndex, playerName) => {
     if (!gameUI) {
-      // Still in lobby phase
+      // 大厅阶段：尚未进入游戏
       const seat = hostConfig.seats.find(s => s.index === seatIndex);
       if (seat) {
         seat.isOccupied = true;
@@ -233,6 +261,7 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
   await gameServer.start(hostConfig.port);
 
   // TUI大厅等待玩家
+  const seatChips = new Map<number, number>();
   const getLobbySeats = (): HostLobbySeat[] => hostConfig.seats.map(s => ({
     index: s.index,
     type: s.type === SeatType.Host ? '主机' :
@@ -240,6 +269,7 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
           s.type === SeatType.LLM ? 'LLM' : '预留',
     name: s.name,
     isOccupied: s.isOccupied,
+    chips: seatChips.get(s.index) ?? hostConfig.startingChips,
   }));
 
   const gameReady = await tuiHostLobby(
@@ -250,7 +280,11 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
       return true;
     },
     async () => {
-      // Refresh — no-op, seats are live
+      // 刷新 — seats 实时更新无需操作
+    },
+    async (seatIndex, newChips) => {
+      seatChips.set(seatIndex, newChips);
+      return true;
     }
   );
 
@@ -277,7 +311,8 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
     bigBlind: hostConfig.bigBlind,
     humanPlayerIndex: hostConfig.hostSeatIndex,
     llmAssignments,
-    aiDifficulties
+    aiDifficulties,
+    playerChips: seatChips.size > 0 ? seatChips : undefined,
   };
 
   const llmPresets = await loadLLMPresets();

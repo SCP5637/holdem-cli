@@ -29,13 +29,13 @@ function checkFlushDraw(hole: Card[], board: Card[]): boolean {
     suitCounts[card.suit] = (suitCounts[card.suit] || 0) + 1;
   }
 
-  // Check if hole cards are same suit and board has 2+ of that suit (4+ total)
+  // 检查底牌同花且公共牌有 2+ 张同色（共 4+ 张）
   if (hole.length >= 2 && hole[0].suit === hole[1].suit) {
     const boardOfSuit = board.filter(c => c.suit === hole[0].suit).length;
     if (boardOfSuit >= 2) return true;
   }
 
-  // Check if each hole card individually has 3+ board cards of same suit
+  // 分别检查每张底牌是否与 3+ 张公共牌同色
   for (const h of hole) {
     const boardOfSuit = board.filter(c => c.suit === h.suit).length;
     if (boardOfSuit >= 3) return true;
@@ -47,7 +47,7 @@ function checkFlushDraw(hole: Card[], board: Card[]): boolean {
 function checkStraightDraw(cards: Card[]): { hasStraightDraw: boolean; openEnded: boolean; gutshot: boolean } {
   const values = [...new Set(cards.map(c => RANK_VALUES[c.rank]))].sort((a, b) => a - b);
 
-  // Add A-as-1 for wheel draws
+  // 加入 A-as-1 用于轮盘顺检测
   if (values.includes(14)) {
     values.unshift(1);
   }
@@ -66,18 +66,18 @@ function checkStraightDraw(cards: Card[]): { hasStraightDraw: boolean; openEnded
 
     if (needed.length === 0) continue; // already have a straight
 
-    // With 5 cards to come (flop: 2 to come, turn: 1 to come)
-    // On flop: need 1 card to complete → 4 outs (gutshot) or 8 outs (open-ended)
-    // On turn: need 1 card
-    // Currently we have 2 hole + up to 5 board cards = up to 7
+    // 剩余5张待发（翻牌圈:2张，转牌圈:1张）
+    // 翻牌圈: 需1张完成 → 4张补牌（卡顺）或8张补牌（两头顺）
+    // 转牌圈: 需1张
+    // 当前有 2底牌 + 最多5公共牌 = 最多7张
     if (needed.length === 1) {
       bestHasDraw = true;
-      // Open-ended: the missing card is at either end of a 4-card sequence
+      // 两头顺：缺的牌在4连张序列两端之一
       const existing4 = values.filter(v => v >= values[i] && v < values[i] + 5);
       if (existing4.length >= 4) {
         const min = Math.min(...existing4);
         const max = Math.max(...existing4);
-        // Open-ended: missing either low end or high end (not both)
+        // 两头顺：缺低端或高端（非两端都缺）
         if (needed[0] === min - 1 || needed[0] === max + 1) {
           bestOpenEnded = true;
         } else {
@@ -87,7 +87,7 @@ function checkStraightDraw(cards: Card[]): { hasStraightDraw: boolean; openEnded
     }
 
     if (needed.length === 2 && cards.length >= 5) {
-      // We have 3 to a straight, need 2 specific cards
+      // 有3张成顺，需2张特定牌
       const existing3 = values.filter(v => v >= values[i] && v < values[i] + 5);
       if (existing3.length === 3) {
         bestHasDraw = true;
