@@ -6,6 +6,7 @@
 import { Card, Suit, Rank, RANK_VALUES } from '../../types/card';
 import { evaluateHand } from '../handEvaluator';
 import { MonteCarloEngine } from './types';
+import { PluginManager } from '../../plugins/manager';
 
 /**
  * 创建52张标准牌组
@@ -51,6 +52,13 @@ export function createMonteCarloEngine(): MonteCarloEngine {
     computeEquity(hole: Card[], board: Card[], numOpponents: number, numSims = 5000): { win: number; tie: number; equity: number } {
       const knownCards = [...hole, ...board];
       const knownKeys = new Set(knownCards.map(cardKey));
+
+      // 插件返回额外可见卡（玻璃卡等），作为已知死卡排除
+      const extra = PluginManager.hookAll('getVisibleCards');
+      for (const r of extra) {
+        if (Array.isArray(r)) for (const k of r as string[]) knownKeys.add(k);
+      }
+
       const remainingDeck = createDeck().filter(c => !knownKeys.has(cardKey(c)));
 
       if (board.length >= 5) {

@@ -5,6 +5,12 @@
 import { Card, RANK_VALUES } from '../../types/card';
 import { GameState, Player, PlayerAction, HandRank } from '../../types/game';
 import { evaluateHand } from '../handEvaluator';
+import { AIDecisionContext } from './types';
+
+/** 识人术(变体4)生效时不应诈唬，因为人类看穿底牌 */
+export function shouldBluff(ctx: AIDecisionContext): boolean {
+  return !ctx.enabledVariants.includes(4);
+}
 
 /** 计算手牌强度 0-1 */
 export function calculateHandStrength(state: GameState, player: Player): number {

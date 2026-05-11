@@ -4,7 +4,7 @@
 
 import { PlayerAction } from '../../../../types/game';
 import { AIDifficulty, AIStrategy, AIDecisionContext, StrategyMetadata } from '../../types';
-import { calculateHandStrength, calculatePotOdds, calculateRaiseAmount, drawEquityBonus, delay, getTotalPot } from '../../helpers';
+import { calculateHandStrength, calculatePotOdds, calculateRaiseAmount, drawEquityBonus, delay, getTotalPot, shouldBluff } from '../../helpers';
 
 export const metadata: StrategyMetadata = {
   name: 'hybrid',
@@ -41,14 +41,14 @@ export async function decide(ctx: AIDecisionContext): Promise<{ action: PlayerAc
     if (availableActions.includes(PlayerAction.AllIn)) return { action: PlayerAction.AllIn };
   }
 
-  // GTO诈唬: 用最底部的牌按比例诈唬
-  if (combinedStrength < 0.25 && Math.random() < 0.22 && availableActions.includes(PlayerAction.Raise) && toCall > 0) {
+  // GTO诈唬: 用最底部的牌按比例诈唬. 识人术下不诈唬
+  if (shouldBluff(ctx) && combinedStrength < 0.25 && Math.random() < 0.22 && availableActions.includes(PlayerAction.Raise) && toCall > 0) {
     const amount = calculateRaiseAmount(ctx.state, ctx.player, 0.6);
     return { action: PlayerAction.Raise, amount };
   }
 
-  // 听牌半诈唬
-  if (drawBonus > 0.15 && Math.random() < 0.30 && availableActions.includes(PlayerAction.Raise)) {
+  // 听牌半诈唬. 识人术下不诈唬
+  if (shouldBluff(ctx) && drawBonus > 0.15 && Math.random() < 0.30 && availableActions.includes(PlayerAction.Raise)) {
     const amount = calculateRaiseAmount(ctx.state, ctx.player, 0.45);
     return { action: PlayerAction.Raise, amount };
   }

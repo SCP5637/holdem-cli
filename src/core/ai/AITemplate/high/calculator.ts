@@ -4,7 +4,7 @@
 
 import { PlayerAction } from '../../../../types/game';
 import { AIDifficulty, AIStrategy, AIDecisionContext, StrategyMetadata } from '../../types';
-import { calculatePotOdds, calculateRaiseAmount, delay, getTotalPot } from '../../helpers';
+import { calculatePotOdds, calculateRaiseAmount, delay, getTotalPot, shouldBluff } from '../../helpers';
 
 export const metadata: StrategyMetadata = {
   name: 'calculator',
@@ -38,8 +38,8 @@ export async function decide(ctx: AIDecisionContext): Promise<{ action: PlayerAc
   const requiredEquity = po;
   if (equity > requiredEquity * 1.05) {
     if (toCall === 0 && availableActions.includes(PlayerAction.Check)) {
-      // 10%概率价值下注
-      if (equity > 0.55 && Math.random() < 0.10 && availableActions.includes(PlayerAction.Raise)) {
+      // 10%概率价值下注/半诈唬. 识人术下不诈唬
+      if (shouldBluff(ctx) && equity > 0.55 && Math.random() < 0.10 && availableActions.includes(PlayerAction.Raise)) {
         const amount = calculateRaiseAmount(ctx.state, ctx.player, 0.5);
         return { action: PlayerAction.Raise, amount };
       }

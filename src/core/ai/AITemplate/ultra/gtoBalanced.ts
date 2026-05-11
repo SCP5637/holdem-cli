@@ -4,7 +4,7 @@
 
 import { PlayerAction } from '../../../../types/game';
 import { AIDifficulty, AIStrategy, AIDecisionContext, StrategyMetadata } from '../../types';
-import { calculateHandStrength, calculatePotOdds, calculateRaiseAmount, delay, getTotalPot } from '../../helpers';
+import { calculateHandStrength, calculatePotOdds, calculateRaiseAmount, delay, getTotalPot, shouldBluff } from '../../helpers';
 
 export const metadata: StrategyMetadata = {
   name: 'gtoBalanced',
@@ -45,8 +45,8 @@ export async function decide(ctx: AIDecisionContext): Promise<{ action: PlayerAc
       return { action: PlayerAction.Raise, amount };
     }
 
-    // 诈唬牌: 按GTO频率诈唬
-    if (isBluffCandidate && Math.random() < gtoBluffRatio && availableActions.includes(PlayerAction.Raise)) {
+    // 诈唬牌: 按GTO频率诈唬. 识人术下不诈唬
+    if (shouldBluff(ctx) && isBluffCandidate && Math.random() < gtoBluffRatio && availableActions.includes(PlayerAction.Raise)) {
       const amount = calculateRaiseAmount(ctx.state, ctx.player, 0.66); // 与价值同注以平衡
       return { action: PlayerAction.Raise, amount };
     }
@@ -79,7 +79,7 @@ export async function decide(ctx: AIDecisionContext): Promise<{ action: PlayerAc
 
   // 听牌: 半诈唬
   const draws = ctx.drawDetector.detectDraws(ctx.player.hand, ctx.state.communityCards);
-  if (draws.comboDraw && Math.random() < 0.5 && availableActions.includes(PlayerAction.Raise)) {
+  if (shouldBluff(ctx) && draws.comboDraw && Math.random() < 0.5 && availableActions.includes(PlayerAction.Raise)) {
     const amount = calculateRaiseAmount(ctx.state, ctx.player, 0.5);
     return { action: PlayerAction.Raise, amount };
   }

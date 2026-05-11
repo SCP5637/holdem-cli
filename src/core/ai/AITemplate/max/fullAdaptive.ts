@@ -4,7 +4,7 @@
 
 import { PlayerAction } from '../../../../types/game';
 import { AIDifficulty, AIStrategy, AIDecisionContext, StrategyMetadata, OpponentArchetype } from '../../types';
-import { calculateHandStrength, calculatePotOdds, calculateRaiseAmount, drawEquityBonus, delay, getTotalPot } from '../../helpers';
+import { calculateHandStrength, calculatePotOdds, calculateRaiseAmount, drawEquityBonus, delay, getTotalPot, shouldBluff } from '../../helpers';
 
 export const metadata: StrategyMetadata = {
   name: 'fullAdaptive',
@@ -93,14 +93,14 @@ export async function decide(ctx: AIDecisionContext): Promise<{ action: PlayerAc
     }
   }
 
-  // 平衡诈唬
-  if (combined < 0.22 && Math.random() < bluffFreq && toCall > 0 && availableActions.includes(PlayerAction.Raise)) {
+  // 平衡诈唬. 识人术下不诈唬
+  if (shouldBluff(ctx) && combined < 0.22 && Math.random() < bluffFreq && toCall > 0 && availableActions.includes(PlayerAction.Raise)) {
     const amount = calculateRaiseAmount(ctx.state, ctx.player, 0.6);
     return { action: PlayerAction.Raise, amount };
   }
 
-  // 听牌半诈唬
-  if (drawBonus > 0.12 && Math.random() < 0.35 && availableActions.includes(PlayerAction.Raise)) {
+  // 听牌半诈唬. 识人术下不诈唬
+  if (shouldBluff(ctx) && drawBonus > 0.12 && Math.random() < 0.35 && availableActions.includes(PlayerAction.Raise)) {
     const amount = calculateRaiseAmount(ctx.state, ctx.player, 0.4);
     return { action: PlayerAction.Raise, amount };
   }

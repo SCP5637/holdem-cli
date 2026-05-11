@@ -2,7 +2,7 @@ import { VariantDef, PluginModule } from '../types';
 import { Card, SUIT_SYMBOLS } from '../../types/card';
 import { GameState } from '../../types/game';
 import { renderGlassCardFull, renderGlassCardCompact, renderGlassCardSimple } from './renderer';
-import { isGlass, markGlass, resetGlass } from './state';
+import { isGlass, markGlass, resetGlass, getAllGlassCardKeys } from './state';
 import { LOOKUP } from '../manager';
 
 function fmtCard(c: Card): string {
@@ -20,6 +20,12 @@ const variant: VariantDef = {
 export const module: PluginModule = {
   variant,
   handlers: {
+    /** 蒙特卡洛：返回所有玻璃卡key，作为已知死卡排除 */
+    getVisibleCards(): string[] | null {
+      const keys = getAllGlassCardKeys();
+      return keys.length > 0 ? keys : null;
+    },
+
     /** 玻璃卡强制可见（透明属性） */
     cardVisibility(card: Card): { visible: boolean } | null {
       if (isGlass(card)) return { visible: true };

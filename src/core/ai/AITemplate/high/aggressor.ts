@@ -4,7 +4,7 @@
 
 import { PlayerAction } from '../../../../types/game';
 import { AIDifficulty, AIStrategy, AIDecisionContext, StrategyMetadata } from '../../types';
-import { calculateHandStrength, calculatePotOdds, calculateRaiseAmount, drawEquityBonus, delay, getTotalPot } from '../../helpers';
+import { calculateHandStrength, calculatePotOdds, calculateRaiseAmount, drawEquityBonus, delay, getTotalPot, shouldBluff } from '../../helpers';
 
 export const metadata: StrategyMetadata = {
   name: 'aggressor',
@@ -34,14 +34,14 @@ export async function decide(ctx: AIDecisionContext): Promise<{ action: PlayerAc
     return { action: PlayerAction.Raise, amount };
   }
 
-  // 面对下注: 用边缘牌也加注(3-bet light)
-  if (toCall > 0 && effectiveStrength > 0.35 && Math.random() < aggressionLevel && availableActions.includes(PlayerAction.Raise)) {
+  // 面对下注: 用边缘牌也加注(3-bet light). 识人术下不诈唬
+  if (shouldBluff(ctx) && toCall > 0 && effectiveStrength > 0.35 && Math.random() < aggressionLevel && availableActions.includes(PlayerAction.Raise)) {
     const amount = calculateRaiseAmount(ctx.state, ctx.player, 0.6);
     return { action: PlayerAction.Raise, amount };
   }
 
-  // 无人下注 → 主动下注(领先下注/donk bet)
-  if (toCall === 0 && Math.random() < 0.5 && availableActions.includes(PlayerAction.Raise)) {
+  // 无人下注 → 主动下注(领先下注/donk bet). 识人术下不偷池
+  if (shouldBluff(ctx) && toCall === 0 && Math.random() < 0.5 && availableActions.includes(PlayerAction.Raise)) {
     const amount = calculateRaiseAmount(ctx.state, ctx.player, 0.4);
     return { action: PlayerAction.Raise, amount };
   }

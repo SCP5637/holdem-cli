@@ -23,6 +23,11 @@ export function resetGlass(): void {
   glassCards.clear();
 }
 
+/** 获取所有玻璃卡牌的key列表 */
+export function getAllGlassCardKeys(): string[] {
+  return [...glassCards];
+}
+
 /** 用于新对局开始时清空所有玻璃标记 */
 export function getGlassCount(): number {
   return glassCards.size;
