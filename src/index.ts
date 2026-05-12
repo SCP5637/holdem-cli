@@ -4,7 +4,7 @@
  * 支持本地游戏、主机模式和客户端模式
  */
 
-import { GameState, GameConfig, PlayerAction, GamePhase, Player, AIDifficulty } from './types/game';
+import { GameState, GameConfig, PlayerAction, GamePhase, Player, AIDifficulty, DIFFICULTY_SHORT_NAMES } from './types/game';
 import { createGame, executeAction, nextPlayer, isBettingRoundComplete, advancePhase, determineHandWinners, awardPot, isHandOver, prepareNewHand, getCurrentPlayer, getAvailableActions } from './core/gameState';
 import { getAIAction, recordPlayerAction } from './core/aiPlayer';
 import { getLLMAction } from './core/llmPlayer';
@@ -128,7 +128,7 @@ async function runLocalGame(menuUI: MenuUI): Promise<void> {
       type: i === humanPosition ? '玩家' :
             llmAssignments?.some(a => a.playerIndex === i) ? 'LLM' : 'AI',
       name: i === humanPosition ? 'You' :
-            llmAssignments?.find(a => a.playerIndex === i)?.presetName || `Player ${i + 1}`,
+            llmAssignments?.find(a => a.playerIndex === i)?.presetName || (i !== humanPosition && aiDifficulties?.has(i) ? `AI-${DIFFICULTY_SHORT_NAMES[aiDifficulties.get(i)!]}-${i + 1}` : `Player ${i + 1}`),
       chips: startingChips,
     })),
     startingChips,
@@ -167,7 +167,7 @@ async function runLocalGame(menuUI: MenuUI): Promise<void> {
   for (const s of lobbyConfig.seats) {
     if (state.players[s.index]) state.players[s.index].name = s.name;
   }
-  logger.info('GAME', '游戏创建成功', { players: state.players.map(p => ({ name: p.name, isHuman: p.isHuman, llmPreset: p.llmPresetName })) });
+  logger.logGameCreation({ players: state.players.map(p => ({ name: p.name, isHuman: p.isHuman, llmPreset: p.llmPresetName, chips: p.chips })), smallBlind: config.smallBlind, bigBlind: config.bigBlind });
 
   // 移交给GameUI
   const { screen, input } = menuUI.transfer();
@@ -332,6 +332,7 @@ async function runHostGame(menuUI: MenuUI): Promise<void> {
       state.players[seat.index].name = seat.name;
     }
   }
+  logger.logGameCreation({ players: state.players.map(p => ({ name: p.name, isHuman: p.isHuman, llmPreset: p.llmPresetName, chips: p.chips })), smallBlind: config.smallBlind, bigBlind: config.bigBlind });
 
   // 广播初始状态
   gameServer.broadcastGameState(state);
@@ -596,7 +597,7 @@ async function runClientGame(menuUI: MenuUI): Promise<void> {
  * 主机模式执行单轮扑克手牌
  */
 async function playHandHost(state: GameState, llmPresetMap: Map<string, LLMPreset>, hostConfig: HostConfig): Promise<void> {
-  logger.info('GAME', '开始新的一手牌', { hand: state.handNumber, dealer: state.dealerIndex });
+  logger.logHandStart(state.handNumber, state.dealerIndex, state.players.map(p => ({ id: p.id, name: p.name, chips: p.chips, isHuman: p.isHuman })));
   gameUI!.clearSystemLog();
   gameUI!.addSystemMessage(`第 ${state.handNumber} 手牌开始`);
   gameUI!.renderGame(state);
@@ -773,9 +774,10 @@ async function resolveHandHost(state: GameState): Promise<void> {
   PluginManager.hook('onHandResolve', state, winners);
 
   const activePlayers = state.players.filter(p => p.isActive);
+  const totalPot = state.pot + state.accumulatedPot + state.sidePots.reduce((s, sp) => s + sp.amount, 0);
 
   if (activePlayers.length === 1) {
-    gameUI!.addSystemMessage(`${activePlayers[0].name} 赢得底池 (其余弃牌)`);
+    gameUI!.addSystemMessage(`${activePlayers[0].name} 赢得底池 ${totalPot} (其余弃牌)`);
   } else {
     gameUI!.addSystemMessage('摊牌');
   }
@@ -798,6 +800,23 @@ async function resolveHandHost(state: GameState): Promise<void> {
 
   awardPot(state, winners);
   gameServer!.broadcastGameState(state);
+
+  // 胜利结算播报
+  const share = Math.floor(totalPot / winners.length);
+  for (const winnerId of winners) {
+    const player = state.players.find(p => p.id === winnerId)!;
+    const desc = handDescriptions.get(winnerId);
+    if (winners.length === 1) {
+      gameUI!.addSystemMessage(`胜利: ${player.name} 赢得 ${totalPot} ${desc ? `(${desc})` : ''}`);
+    } else {
+      gameUI!.addSystemMessage(`胜利: ${player.name} 赢得 ${share} ${desc ? `(${desc})` : ''} (平分)`);
+    }
+  }
+
+  logger.logHandEnd(state.handNumber, winners.map(id => {
+    const p = state.players.find(p => p.id === id)!;
+    return { id: p.id, name: p.name, chips: p.chips };
+  }), totalPot);
 
   await gameUI!.waitForEnter();
 }
@@ -835,7 +854,7 @@ function getAvailableActionsFromState(gameState: SerializedGameState, mySeatInde
 
 // 原本地游戏函数保持不变
 async function playHand(state: GameState, llmPresetMap: Map<string, LLMPreset>): Promise<void> {
-  logger.info('GAME', '开始新的一手牌', { hand: state.handNumber, dealer: state.dealerIndex });
+  logger.logHandStart(state.handNumber, state.dealerIndex, state.players.map(p => ({ id: p.id, name: p.name, chips: p.chips, isHuman: p.isHuman })));
   gameUI!.clearSystemLog();
   gameUI!.addSystemMessage(`第 ${state.handNumber} 手牌开始`);
   gameUI!.renderGame(state);
@@ -937,9 +956,10 @@ async function resolveHand(state: GameState): Promise<void> {
   PluginManager.hook('onHandResolve', state, winners);
 
   const activePlayers = state.players.filter(p => p.isActive);
+  const totalPot = state.pot + state.accumulatedPot + state.sidePots.reduce((s, sp) => s + sp.amount, 0);
 
   if (activePlayers.length === 1) {
-    gameUI!.addSystemMessage(`${activePlayers[0].name} 赢得底池 (其余弃牌)`);
+    gameUI!.addSystemMessage(`${activePlayers[0].name} 赢得底池 ${totalPot} (其余弃牌)`);
   } else {
     gameUI!.addSystemMessage('摊牌');
   }
@@ -961,6 +981,23 @@ async function resolveHand(state: GameState): Promise<void> {
   gameUI!.renderHandResult(winners, handDescriptions, state);
 
   awardPot(state, winners);
+
+  // 胜利结算播报
+  const share = Math.floor(totalPot / winners.length);
+  for (const winnerId of winners) {
+    const player = state.players.find(p => p.id === winnerId)!;
+    const desc = handDescriptions.get(winnerId);
+    if (winners.length === 1) {
+      gameUI!.addSystemMessage(`胜利: ${player.name} 赢得 ${totalPot} ${desc ? `(${desc})` : ''}`);
+    } else {
+      gameUI!.addSystemMessage(`胜利: ${player.name} 赢得 ${share} ${desc ? `(${desc})` : ''} (平分)`);
+    }
+  }
+
+  logger.logHandEnd(state.handNumber, winners.map(id => {
+    const p = state.players.find(p => p.id === id)!;
+    return { id: p.id, name: p.name, chips: p.chips };
+  }), totalPot);
 
   await gameUI!.waitForEnter();
 }

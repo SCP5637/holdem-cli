@@ -17,6 +17,14 @@ export enum AIDifficulty {
   Max = 'max'
 }
 
+export const DIFFICULTY_SHORT_NAMES: Record<AIDifficulty, string> = {
+  [AIDifficulty.Low]: 'Low',
+  [AIDifficulty.Medium]: 'Medium',
+  [AIDifficulty.High]: 'High',
+  [AIDifficulty.Ultra]: 'Ultra',
+  [AIDifficulty.Max]: 'Max'
+};
+
 export const DIFFICULTY_LABELS: Record<AIDifficulty, string> = {
   [AIDifficulty.Low]: 'Low (初级)',
   [AIDifficulty.Medium]: 'Medium (中级)',

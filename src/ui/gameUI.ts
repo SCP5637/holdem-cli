@@ -23,7 +23,7 @@ import { Card, Suit, Rank } from '../types/card';
 
 type OverlayState =
   | { type: 'none' }
-  | { type: 'action-panel'; actions: PlayerAction[]; selectedIndex?: number }
+  | { type: 'action-panel'; actions: PlayerAction[]; selectedIndex?: number; timeoutMs?: number }
   | { type: 'raise-input'; text: string }
   | { type: 'enter-prompt'; message?: string }
   | { type: 'enter-or-zero'; message?: string };
@@ -52,6 +52,8 @@ function calcPanelWidth(totalWidth: number): number {
 }
 
 export class GameUI {
+  private static readonly TIMEOUT_MS = 120000;
+
   private screen: Screen;
   private input: InputHandler;
   private theme: Theme;
@@ -222,7 +224,7 @@ export class GameUI {
   private renderRightPanel(width: number, height: number): string[] {
     switch (this.overlayState.type) {
       case 'action-panel':
-        return renderActionPanel({ actions: this.overlayState.actions, selectedIndex: this.overlayState.selectedIndex }, this.theme, width, height);
+        return renderActionPanel({ actions: this.overlayState.actions, selectedIndex: this.overlayState.selectedIndex, timeoutMs: this.overlayState.timeoutMs }, this.theme, width, height);
       case 'raise-input':
         return renderRaiseInput(this.overlayState.text, this.theme, width, height);
       case 'enter-prompt': {
@@ -301,10 +303,10 @@ export class GameUI {
   showAction(_playerName: string, _action: string, _amount?: number): void {
     if (this.fallbackMode) {
       const actionMap: Record<string, string> = {
-        fold: '弃牌', check: '过牌', call: '跟注', raise: '加注', allin: '全押'
+        fold: '弃牌', check: '过牌', call: '跟注', raise: '加注到', allin: '全押'
       };
       const actionText = actionMap[_action] || _action;
-      console.log(`  → ${_playerName} ${actionText}`);
+      console.log(`  → ${_playerName} ${actionText}${_amount && _action !== 'fold' && _action !== 'check' ? ` ${_amount}` : ''}`);
       return;
     }
     // actionLog已含此动作，下一帧renderGame自动展示
@@ -398,17 +400,20 @@ export class GameUI {
   // ============ 输入 ============
 
   /** 等待玩家从可用动作中选择 — 左右键切换/数字跳转/回车确认，上下键留给日志滚动 */
+
   async waitForAction(actions: PlayerAction[]): Promise<{ action: PlayerAction; amount?: number }> {
     const actionOrder = [PlayerAction.Fold, PlayerAction.Check, PlayerAction.Call, PlayerAction.Raise, PlayerAction.AllIn];
     const ordered = actionOrder.filter(a => actions.includes(a));
     let selectedIdx = 0;
+    let remainingMs = GameUI.TIMEOUT_MS;
+    const startTime = Date.now();
 
     const reRender = () => {
-      this.overlayState = { type: 'action-panel', actions: ordered, selectedIndex: selectedIdx };
+      this.overlayState = { type: 'action-panel', actions: ordered, selectedIndex: selectedIdx, timeoutMs: remainingMs };
       if (this.lastState) this.renderGame(this.lastState, this.lastShowAllCards);
     };
 
-    // 自定义按键处理，只响应 left/right/数字/回车，up/down 留给持久化handler滚动日志
+    // 自定义按键处理，只响应 left/right/数字/回车
     const waitForActionKey = (): Promise<'left' | 'right' | 'enter' | 'escape' | number> => {
       return new Promise((resolve) => {
         const handler = (key: import('./engine/input').KeyEvent) => {
@@ -438,7 +443,6 @@ export class GameUI {
             resolve(num);
             return;
           }
-          // up/down 不处理，透传给持久化handler滚动日志
         };
 
         const cleanup = () => {
@@ -449,17 +453,36 @@ export class GameUI {
       });
     };
 
+    const tick = () => {
+      const elapsed = Date.now() - startTime;
+      remainingMs = Math.max(0, GameUI.TIMEOUT_MS - elapsed);
+      if (remainingMs % 1000 < 50) {
+        reRender();
+      }
+    };
+
+    const tickTimer = setInterval(tick, 200);
+
     try {
       reRender();
 
       while (true) {
-        // 120s超时保护：Promise.race确保即使无按键事件也会超时
-        const timeoutPromise = new Promise<'timeout'>(resolve =>
-          setTimeout(() => resolve('timeout'), 120000)
-        );
+        tick();
+        const timeoutPromise = new Promise<'timeout'>(resolve => {
+          const check = () => {
+            tick();
+            if (remainingMs <= 0) {
+              resolve('timeout');
+            } else {
+              setTimeout(check, Math.min(200, remainingMs));
+            }
+          };
+          setTimeout(check, Math.min(200, remainingMs));
+        });
         const result = await Promise.race([waitForActionKey(), timeoutPromise]);
         if (result === 'timeout') {
           this.overlayState = { type: 'none' };
+          clearInterval(tickTimer);
           return { action: PlayerAction.Fold };
         }
         const sel = result;
@@ -503,6 +526,7 @@ export class GameUI {
         // sel === 'escape' — 忽略，继续等待
       }
     } finally {
+      clearInterval(tickTimer);
       this.overlayState = { type: 'none' };
     }
   }

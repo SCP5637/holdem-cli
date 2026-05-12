@@ -32,17 +32,12 @@ class Logger {
     if (this.initialized) return;
 
     this.isDebugMode = debugMode;
+    await this.ensureLogDirectory();
+    await this.clearLatestLog();
 
-    if (this.isDebugMode) {
-      await this.ensureLogDirectory();
-      await this.clearLatestLog();
+    this.flushInterval = setInterval(() => this.flush(), 5000);
 
-      // 每 5 秒刷新一次日志到文件
-      this.flushInterval = setInterval(() => this.flush(), 5000);
-
-      this.log('INFO', 'LOGGER', '调试日志系统已启动');
-    }
-
+    this.log('INFO', 'LOGGER', `日志系统已启动 (模式: ${debugMode ? '调试' : '标准'})`);
     this.initialized = true;
   }
 
@@ -89,15 +84,17 @@ class Logger {
 
     const logLine = this.formatLogEntry(entry);
 
-    // 控制台输出写入stderr，避免污染交替屏幕缓冲区(stdout)
+    // 调试模式下在 stderr 输出 INFO+ 级别；ERROR/WARN 始终输出
     if (this.isDebugMode || level === 'ERROR' || level === 'WARN') {
-      process.stderr.write(`[${level}] [${category}] ${message}\n`);
+      if (this.isDebugMode || level === 'ERROR' || level === 'WARN') {
+        process.stderr.write(`[${level}] [${category}] ${message}\n`);
+      }
     }
 
-    // 写入日志缓冲区
-    if (this.isDebugMode) {
-      this.logBuffer.push(logLine);
-    }
+    // DEBUG 级别仅在调试模式下写入
+    if (level === 'DEBUG' && !this.isDebugMode) return;
+
+    this.logBuffer.push(logLine);
   }
 
   private async flush(): Promise<void> {
@@ -161,11 +158,22 @@ class Logger {
     this.info('GAME', `阶段切换`, { from: fromPhase, to: toPhase });
   }
 
+  logGameCreation(config: unknown): void {
+    this.info('GAME', '游戏创建', { config });
+  }
+
+  logHandStart(handNumber: number, dealerIndex: number, players: { id: number; name: string; chips: number; isHuman: boolean }[]): void {
+    this.info('GAME', `第 ${handNumber} 手牌开始`, { handNumber, dealerIndex, players });
+  }
+
+  logHandEnd(handNumber: number, winners: { id: number; name: string; chips: number }[], totalPot: number): void {
+    this.info('GAME', `第 ${handNumber} 手牌结束`, { handNumber, winners, totalPot });
+  }
+
   // 获取调试模式状态
   isDebugEnabled(): boolean {
     return this.isDebugMode;
   }
 }
 
-// 导出单例实例
 export const logger = Logger.getInstance();

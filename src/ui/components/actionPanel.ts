@@ -28,6 +28,7 @@ export interface ActionPanelData {
   actions: PlayerAction[];
   toCall?: number;
   selectedIndex?: number;
+  timeoutMs?: number;
 }
 
 export function renderActionPanel(data: ActionPanelData, theme: Theme, width: number, height?: number): string[] {
@@ -66,6 +67,14 @@ export function renderActionPanel(data: ActionPanelData, theme: Theme, width: nu
     ? `←→选择 Enter确认`
     : '←→ 选择 | 数字跳转 | Enter 确认';
   lines.push(centerAnsi(themed('│', b) + ' ' + padAnsi(themed(hint, theme.dim), inner) + ' ' + themed('│', b), width));
+
+  if (data.timeoutMs !== undefined && data.timeoutMs > 0) {
+    const secs = Math.ceil(data.timeoutMs / 1000);
+    const countdown = `超时弃牌: ${secs}s`;
+    lines.push(centerAnsi(themed('│', b) + ' ' + padAnsi(themed(countdown, theme.dim), inner) + ' ' + themed('│', b), width));
+  } else if (data.timeoutMs === 0) {
+    lines.push(centerAnsi(themed('│', b) + ' ' + padAnsi(themed('超时将自动弃牌', theme.dim), inner) + ' ' + themed('│', b), width));
+  }
 
   lines.push(centerAnsi(themed('└' + '─'.repeat(boxW) + '┘', b), width));
 

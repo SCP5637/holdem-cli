@@ -5,7 +5,7 @@
 
 import * as readline from 'readline';
 import { execSync } from 'child_process';
-import { AIDifficulty } from '../types/game';
+import { AIDifficulty, DIFFICULTY_SHORT_NAMES } from '../types/game';
 import { LLMAssignment, LLMPreset } from '../types/llm';
 import { loadLLMPresets, upsertLLMPreset, deleteLLMPreset } from '../core/llmPresetStore';
 import { RunMode, SeatConfig, SeatType, HostConfig, ClientConfig } from '../types/network';
@@ -885,7 +885,7 @@ async function tuiConfigureSeat(seatIndex: number, presets: LLMPreset[]): Promis
       return {
         index: seatIndex,
         type: SeatType.AI,
-        name: `Player ${seatIndex + 1}`,
+        name: `AI-${DIFFICULTY_SHORT_NAMES[diff ?? AIDifficulty.Medium]}-${seatIndex + 1}`,
         isOccupied: true,
         aiDifficulty: diff ?? AIDifficulty.Medium
       };
@@ -982,7 +982,7 @@ async function rlConfigureSeat(seatIndex: number, presets: LLMPreset[]): Promise
   switch (adjustedChoice) {
     case 1: {
       const difficulty = await rlSelectDifficulty();
-      return { index: seatIndex, type: SeatType.AI, name: `Player ${seatIndex + 1}`, isOccupied: true, aiDifficulty: difficulty };
+      return { index: seatIndex, type: SeatType.AI, name: `AI-${DIFFICULTY_SHORT_NAMES[difficulty]}-${seatIndex + 1}`, isOccupied: true, aiDifficulty: difficulty };
     }
     case 2: {
       // LLM 玩家 — 选择预设
@@ -998,7 +998,7 @@ async function rlConfigureSeat(seatIndex: number, presets: LLMPreset[]): Promise
       return { index: seatIndex, type: SeatType.Remote, name, isOccupied: false };
     }
     default:
-      return { index: seatIndex, type: SeatType.AI, name: `Player ${seatIndex + 1}`, isOccupied: true };
+      return { index: seatIndex, type: SeatType.AI, name: `AI-Medium-${seatIndex + 1}`, isOccupied: true };
   }
 }
 
