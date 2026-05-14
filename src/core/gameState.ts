@@ -386,6 +386,11 @@ export function executeAction(state: GameState, action: PlayerAction, amount?: n
     time: `{${h}:${m}:${s}}`
   });
 
+  // 最多保留100条，溢出清除最旧
+  while (state.actionLog.length > 100) {
+    state.actionLog.shift();
+  }
+
   player.hasActed = true;
   return true;
 }
@@ -587,8 +592,6 @@ export function prepareNewHand(state: GameState): void {
   }
 
   state.dealerIndex = (state.dealerIndex + 1) % state.players.length;
-
-  state.actionLog = [];
 
   postBlinds(state);
   dealHoleCards(state);
