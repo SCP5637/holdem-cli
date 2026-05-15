@@ -65,7 +65,7 @@ export function renderTable(vm: TableViewModel, theme: Theme, width: number): st
 
   // 公共牌
   if (vm.communityCards.length > 0) {
-    const ccData: CommunityCardsData = { cards: vm.communityCards };
+    const ccData: CommunityCardsData = { cards: vm.communityCards, phase: vm.phase };
     const ccLines = renderCommunityCards(ccData, theme, tableW);
     for (const line of ccLines) {
       const inner = centerAnsi(line, boxInner);

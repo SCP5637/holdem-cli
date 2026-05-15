@@ -392,6 +392,7 @@ export function executeAction(state: GameState, action: PlayerAction, amount?: n
   }
 
   player.hasActed = true;
+  PluginManager.hook('onActionExecuted', state, player.id, action, amount);
   return true;
 }
 
@@ -443,6 +444,7 @@ export function isBettingRoundComplete(state: GameState): boolean {
  */
 export function advancePhase(state: GameState): void {
   resetBets(state);
+  const prevPhase = state.currentPhase;
 
   switch (state.currentPhase) {
     case GamePhase.PreFlop:
@@ -461,6 +463,8 @@ export function advancePhase(state: GameState): void {
       state.currentPhase = GamePhase.Showdown;
       break;
   }
+
+  PluginManager.hook('onPhaseAdvanced', state, prevPhase);
 
   if (state.currentPhase !== GamePhase.Showdown) {
     setFirstToAct(state);

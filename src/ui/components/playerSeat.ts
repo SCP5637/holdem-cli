@@ -89,7 +89,7 @@ function renderFull(data: PlayerSeatData, theme: Theme, width: number): string[]
     const cards = data.hand.map(toCardType);
     const hiddenIndices: number[] = [];
     for (let i = 0; i < cards.length; i++) {
-      const vis = PluginManager.hook('cardVisibility', cards[i]);
+      const vis = PluginManager.hook('cardVisibility', cards[i], { source: 'hole', isOwnHand: data.isYou && !data.showAllCards, isShowdown: data.showAllCards });
       // hide if: force-hidden by hook OR (not force-visible AND seat not showing)
       if (vis?.visible === false || (!effectiveShow && vis?.visible !== true)) {
         hiddenIndices.push(i);
@@ -140,7 +140,7 @@ function renderCompact(data: PlayerSeatData, theme: Theme, width: number): strin
     const cards = data.hand.map(toCardType);
     const hiddenIndices: number[] = [];
     for (let i = 0; i < cards.length; i++) {
-      const vis = PluginManager.hook('cardVisibility', cards[i]);
+      const vis = PluginManager.hook('cardVisibility', cards[i], { source: 'hole', isOwnHand: data.isYou && !data.showAllCards, isShowdown: data.showAllCards });
       if (vis?.visible === false || (!effectiveShow && vis?.visible !== true)) {
         hiddenIndices.push(i);
       }
@@ -181,7 +181,7 @@ function renderSlim(data: PlayerSeatData, theme: Theme, width: number): string[]
   } else if (data.hand.length > 0) {
     const cards = data.hand.map(toCardType);
     const parts = cards.map(c => {
-      const vis = PluginManager.hook('cardVisibility', c);
+      const vis = PluginManager.hook('cardVisibility', c, { source: 'hole', isOwnHand: data.isYou && !data.showAllCards, isShowdown: data.showAllCards });
       // 显示条件: 强制可见 OR (座位可见 AND 非强制隐藏)
       if (vis?.visible === true || (effectiveShow && vis?.visible !== false)) {
         return renderCardSimple(c);
